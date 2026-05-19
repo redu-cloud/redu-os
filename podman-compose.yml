@@ -1,15 +1,14 @@
-version: '3.9'
+version: "3.9"
+
 services:
   reduos:
     build:
       context: .
       dockerfile: Dockerfile
+    image: localhost/redu-os:latest
+    container_name: reduos
     ports:
       - "3000:3000"
     env_file:
       - .env.local
-    volumes:
-      - ./:/usr/src/app:Z
-    working_dir: /usr/src/app
-    command: npm run dev
     restart: unless-stopped
