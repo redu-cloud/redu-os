@@ -1,0 +1,13 @@
+version: "3.8"
+
+services:
+  ollama:
+    image: docker.io/ollama/ollama:latest
+    container_name: redu-os-ollama
+    restart: unless-stopped
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ../.local/ollama:/root/.ollama

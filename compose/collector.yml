@@ -1,0 +1,14 @@
+version: "3.8"
+
+services:
+  collector:
+    build:
+      context: ..
+      dockerfile: Containerfile
+    image: localhost/redu-os-collector:latest
+    container_name: redu-os-collector
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    ports:
+      - "${COLLECTOR_PORT:-3005}:3005"

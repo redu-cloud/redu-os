@@ -119,9 +119,23 @@ RESET_LOCAL_DATA=true RESET_MODE=all npm run reset:local
 
 For a full walkthrough with health checks, curl examples, Supabase inspection, Qdrant inspection, DeepSeek tests, and realistic startup scenarios, see [Local Stack and Use Cases](./docs/local-stack-and-use-cases.md).
 
+The smallest complete tier includes Supabase, Qdrant, Ollama/DeepSeek, and the collector on one machine. The modular tier uses the same collector env vars to point at Supabase, Qdrant, Ollama, or automation services running on other VMs. Use `.env.modular.example` as the starting point for that layout. See [Deployment Modes](./docs/deployment-modes.md).
+
+Modular service commands:
+
+```bash
+npm run modular:collector:up
+npm run modular:qdrant:up
+npm run modular:ollama:up
+```
+
+Each also has `:status`, `:logs`, and `:down` variants. See [Modular VM Walkthrough](./docs/modular-vm-walkthrough.md).
+
 ## Documentation
 
 - [Local Stack and Use Cases](./docs/local-stack-and-use-cases.md): one-command stack, service checks, curl examples, support/product/error/uptime/analytics scenarios, and troubleshooting.
+- [Deployment Modes](./docs/deployment-modes.md): smallest complete tier, modular split-VM tier, service contracts, network matrix, and rollout guidance.
+- [Modular VM Walkthrough](./docs/modular-vm-walkthrough.md): compose files and commands for running collector, Qdrant, and Ollama on separate VMs.
 
 ## Build
 

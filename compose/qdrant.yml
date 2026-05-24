@@ -1,0 +1,16 @@
+version: "3.8"
+
+services:
+  qdrant:
+    image: docker.io/qdrant/qdrant:latest
+    container_name: redu-os-qdrant
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
+    ports:
+      - "${QDRANT_REST_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - ../.local/qdrant:/qdrant/storage
