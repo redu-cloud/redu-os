@@ -1,0 +1,160 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+  - podman
+  - podman-compose
+  - uidmap
+  - git
+  - curl
+  - jq
+  - openssl
+  - nodejs
+  - npm
+
+write_files:
+  - path: /root/redu-os-collector.env
+    permissions: "0600"
+    content: |
+      # Replace REPO_URL with your GitHub repository URL before use.
+      REPO_URL=https://github.com/YOUR_ORG/redu-os-collector.git
+
+      COLLECTOR_PUBLIC_URL=""
+      COLLECTOR_PORT=3005
+      COLLECTOR_API_KEY=AUTO_GENERATE
+
+      SUPABASE_URL=http://YOUR_SUPABASE_HOST:8000
+      SUPABASE_SERVICE_ROLE_KEY=YOUR_SUPABASE_SERVICE_ROLE_KEY
+
+      QDRANT_ENABLED=false
+      QDRANT_URL=http://YOUR_QDRANT_HOST:6333
+      QDRANT_API_KEY=
+      QDRANT_COLLECTION=redu_os_events
+
+      AI_ENABLED=false
+      OLLAMA_URL=http://YOUR_OLLAMA_HOST:11434
+      OLLAMA_MODEL=deepseek-r1:8b
+      OLLAMA_EMBED_MODEL=nomic-embed-text
+
+      AUTOMATION_WEBHOOK_URL=
+      AUTOMATION_WEBHOOK_API_KEY=
+
+  - path: /usr/local/bin/redu_os_collector_bootstrap.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      LOG_FILE="/var/log/redu-os-collector-bootstrap.log"
+      exec > >(tee -a "$LOG_FILE") 2>&1
+
+      source /root/redu-os-collector.env
+
+      APP_DIR="/opt/redu-os-collector"
+
+      systemctl enable --now podman.socket
+
+      cat > /etc/containers/registries.conf <<'EOF_REG'
+      unqualified-search-registries = ["docker.io"]
+
+      [[registry]]
+      prefix = "docker.io"
+      location = "docker.io"
+      EOF_REG
+
+      if [ "${COLLECTOR_API_KEY:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        COLLECTOR_API_KEY="$(openssl rand -hex 32)"
+      fi
+
+      if [ -z "${COLLECTOR_PUBLIC_URL:-}" ]; then
+        PUBLIC_IP="$(curl -fsS --max-time 10 https://api.ipify.org || true)"
+        if [ -z "$PUBLIC_IP" ]; then
+          PUBLIC_IP="$(hostname -I | awk '{print $1}')"
+        fi
+        COLLECTOR_PUBLIC_URL="http://${PUBLIC_IP}:${COLLECTOR_PORT}"
+      fi
+
+      rm -rf "$APP_DIR"
+      git clone "$REPO_URL" "$APP_DIR"
+
+      cd "$APP_DIR"
+
+      cat > "$APP_DIR/.env" <<EOF_ENV
+      PORT=${COLLECTOR_PORT}
+      NODE_ENV=production
+      COLLECTOR_API_KEY=${COLLECTOR_API_KEY}
+
+      SUPABASE_URL=${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+
+      QDRANT_ENABLED=${QDRANT_ENABLED}
+      QDRANT_URL=${QDRANT_URL}
+      QDRANT_API_KEY=${QDRANT_API_KEY}
+      QDRANT_COLLECTION=${QDRANT_COLLECTION}
+
+      AI_ENABLED=${AI_ENABLED}
+      OLLAMA_URL=${OLLAMA_URL}
+      OLLAMA_MODEL=${OLLAMA_MODEL}
+      OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL}
+
+      AUTOMATION_WEBHOOK_URL=${AUTOMATION_WEBHOOK_URL}
+      AUTOMATION_WEBHOOK_API_KEY=${AUTOMATION_WEBHOOK_API_KEY}
+      EOF_ENV
+
+      chmod 600 "$APP_DIR/.env"
+
+      podman build -f Containerfile -t localhost/redu-os-collector:latest .
+
+      podman rm -f redu-os-collector 2>/dev/null || true
+
+      podman run -d         --name redu-os-collector         --restart unless-stopped         --env-file "$APP_DIR/.env"         -p "${COLLECTOR_PORT}:${COLLECTOR_PORT}"         localhost/redu-os-collector:latest
+
+      cat > /etc/systemd/system/redu-os-collector.service <<EOF_SERVICE
+      [Unit]
+      Description=reduOS Collector
+      Requires=network-online.target podman.socket
+      After=network-online.target podman.socket
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/bin/podman start redu-os-collector
+      ExecStop=/usr/bin/podman stop redu-os-collector
+      TimeoutStartSec=0
+
+      [Install]
+      WantedBy=multi-user.target
+      EOF_SERVICE
+
+      systemctl daemon-reload
+      systemctl enable redu-os-collector.service
+
+      cat > /root/REDU_OS_COLLECTOR_README.txt <<EOF_README
+      reduOS Collector
+
+      URL:
+        ${COLLECTOR_PUBLIC_URL}
+
+      API key:
+        ${COLLECTOR_API_KEY}
+
+      Health:
+        curl ${COLLECTOR_PUBLIC_URL}/health
+
+      Test:
+        curl -i -X POST ${COLLECTOR_PUBLIC_URL}/v1/events \
+          -H "Content-Type: application/json" \
+          -H "X-API-Key: ${COLLECTOR_API_KEY}" \
+          -d '{"type":"product.feedback","source":"demo","message":"Hello AI OS","metadata":{"demo":true}}'
+
+      App directory:
+        ${APP_DIR}
+
+      Logs:
+        podman logs redu-os-collector
+        /var/log/redu-os-collector-bootstrap.log
+      EOF_README
+
+runcmd:
+  - [ bash, -lc, "/usr/local/bin/redu_os_collector_bootstrap.sh > /var/log/redu-os-collector-bootstrap-runcmd.log 2>&1" ]

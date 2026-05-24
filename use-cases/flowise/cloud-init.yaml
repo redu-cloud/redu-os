@@ -1,0 +1,1124 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+  - podman
+  - podman-compose
+  - uidmap
+  - curl
+  - jq
+  - openssl
+  - nodejs
+  - npm
+  - psmisc
+
+write_files:
+  - path: /root/flowise-demo.env
+    permissions: "0600"
+    owner: root:root
+    content: |
+      # Public URL for users.
+      # Leave empty to auto-detect public IP and use http://IP:3000
+      FLOWISE_PUBLIC_URL=""
+
+      # Flowise
+      FLOWISE_IMAGE="docker.io/flowiseai/flowise:latest"
+      FLOWISE_PORT=3000
+
+      # Initial Flowise organization/admin setup
+      FLOWISE_ADMIN_NAME="redu.cloud Admin"
+      FLOWISE_ADMIN_EMAIL=admin@example.com
+      FLOWISE_ADMIN_PASSWORD='ChangeMeStrong123!'
+
+      # PostgreSQL persistence
+      FLOWISE_POSTGRES_DATABASE=flowise
+      FLOWISE_POSTGRES_USERNAME=flowise
+      FLOWISE_POSTGRES_PASSWORD=AUTO_GENERATE
+
+      # Auto-create a starter Ollama chatflow
+      FLOWISE_AUTO_CREATE_CHATFLOW=true
+      FLOWISE_CHATFLOW_NAME="redu.cloud Private Ollama Chat"
+
+      # Set this to your Ollama VM URL.
+      # Example: OLLAMA_URL=http://10.1.0.224:11434
+      OLLAMA_URL=http://YOUR_OLLAMA_VM_IP:11434
+      OLLAMA_MODEL=deepseek-r1:1.5b
+
+      # Optional: URLs of other redu.cloud AI stack services.
+      # These are written to README so the user can connect them later in Flowise UI.
+      QDRANT_URL=http://YOUR_QDRANT_VM_IP:6333
+      QDRANT_API_KEY=YOUR_QDRANT_API_KEY_HERE
+      FIRECRAWL_BRIDGE_URL=http://YOUR_FIRECRAWL_VM_IP:3003
+      FIRECRAWL_BRIDGE_API_KEY=YOUR_FIRECRAWL_BRIDGE_API_KEY_HERE
+
+      # Set true only if reusing a broken test VM and you want to wipe Flowise data.
+      FLOWISE_RESET_DATA_ON_BOOT=false
+
+  - path: /etc/containers/registries.conf
+    permissions: "0644"
+    owner: root:root
+    content: |
+      unqualified-search-registries = ["docker.io"]
+
+      [[registry]]
+      prefix = "docker.io"
+      location = "docker.io"
+
+  - path: /usr/local/bin/flowise_bootstrap.sh
+    permissions: "0755"
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      LOG_FILE="/var/log/flowise-bootstrap.log"
+      exec > >(tee -a "$LOG_FILE") 2>&1
+
+      echo "========================================"
+      echo " redu.cloud Flowise bootstrap"
+      echo " Started: $(date -Is)"
+      echo "========================================"
+
+      source /root/flowise-demo.env
+
+      APP_DIR="/opt/flowise"
+      ADMIN_SETUP_DIR="/opt/flowise-admin-setup"
+
+      mkdir -p "$APP_DIR"
+      mkdir -p "$ADMIN_SETUP_DIR"
+
+      if [ -z "${FLOWISE_PUBLIC_URL:-}" ]; then
+        PUBLIC_IP="$(curl -fsS --max-time 10 https://api.ipify.org || true)"
+        if [ -z "$PUBLIC_IP" ]; then
+          PUBLIC_IP="$(hostname -I | awk '{print $1}')"
+        fi
+        FLOWISE_PUBLIC_URL="http://${PUBLIC_IP}:${FLOWISE_PORT}"
+      fi
+
+      if [ "${FLOWISE_POSTGRES_PASSWORD:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        FLOWISE_POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+      fi
+
+      echo "Writing normalized /root/flowise-demo.env..."
+
+      cat > /root/flowise-demo.env <<EOF
+      FLOWISE_PUBLIC_URL="${FLOWISE_PUBLIC_URL}"
+
+      FLOWISE_IMAGE="${FLOWISE_IMAGE}"
+      FLOWISE_PORT=${FLOWISE_PORT}
+
+      FLOWISE_ADMIN_NAME="${FLOWISE_ADMIN_NAME}"
+      FLOWISE_ADMIN_EMAIL=${FLOWISE_ADMIN_EMAIL}
+      FLOWISE_ADMIN_PASSWORD='${FLOWISE_ADMIN_PASSWORD}'
+
+      FLOWISE_POSTGRES_DATABASE=${FLOWISE_POSTGRES_DATABASE}
+      FLOWISE_POSTGRES_USERNAME=${FLOWISE_POSTGRES_USERNAME}
+      FLOWISE_POSTGRES_PASSWORD=${FLOWISE_POSTGRES_PASSWORD}
+
+      FLOWISE_AUTO_CREATE_CHATFLOW=${FLOWISE_AUTO_CREATE_CHATFLOW}
+      FLOWISE_CHATFLOW_NAME="${FLOWISE_CHATFLOW_NAME}"
+
+      OLLAMA_URL=${OLLAMA_URL}
+      OLLAMA_MODEL=${OLLAMA_MODEL}
+
+      QDRANT_URL=${QDRANT_URL}
+      QDRANT_API_KEY=${QDRANT_API_KEY}
+      FIRECRAWL_BRIDGE_URL=${FIRECRAWL_BRIDGE_URL}
+      FIRECRAWL_BRIDGE_API_KEY=${FIRECRAWL_BRIDGE_API_KEY}
+
+      FLOWISE_RESET_DATA_ON_BOOT=${FLOWISE_RESET_DATA_ON_BOOT}
+      EOF
+
+      chmod 600 /root/flowise-demo.env
+      source /root/flowise-demo.env
+
+      echo "Writing /opt/flowise/.env..."
+
+      cat > /opt/flowise/.env <<EOF
+      PORT=${FLOWISE_PORT}
+
+      DATABASE_TYPE=postgres
+      DATABASE_HOST=flowise-postgres
+      DATABASE_PORT=5432
+      DATABASE_NAME=${FLOWISE_POSTGRES_DATABASE}
+      DATABASE_USER=${FLOWISE_POSTGRES_USERNAME}
+      DATABASE_PASSWORD=${FLOWISE_POSTGRES_PASSWORD}
+      PGSSLMODE=disable
+
+      APIKEY_PATH=/root/.flowise
+      SECRETKEY_PATH=/root/.flowise
+      LOG_PATH=/root/.flowise/logs
+      BLOB_STORAGE_PATH=/root/.flowise/storage
+
+      DISABLE_FLOWISE_TELEMETRY=true
+      DEBUG=false
+      EOF
+
+      chmod 600 /opt/flowise/.env
+
+      echo "Writing podman-compose.yml..."
+
+      cat > /opt/flowise/podman-compose.yml <<'EOF'
+      version: "3.8"
+
+      services:
+        flowise-postgres:
+          image: docker.io/postgres:16-alpine
+          container_name: flowise-postgres
+          restart: unless-stopped
+          environment:
+            POSTGRES_DB: ${FLOWISE_POSTGRES_DATABASE}
+            POSTGRES_USER: ${FLOWISE_POSTGRES_USERNAME}
+            POSTGRES_PASSWORD: ${FLOWISE_POSTGRES_PASSWORD}
+          volumes:
+            - flowise_postgres_data:/var/lib/postgresql/data
+          healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U ${FLOWISE_POSTGRES_USERNAME} -d ${FLOWISE_POSTGRES_DATABASE}"]
+            interval: 10s
+            timeout: 5s
+            retries: 30
+            start_period: 20s
+
+        flowise:
+          image: ${FLOWISE_IMAGE}
+          container_name: flowise
+          restart: unless-stopped
+          depends_on:
+            flowise-postgres:
+              condition: service_healthy
+          ports:
+            - "${FLOWISE_PORT}:${FLOWISE_PORT}"
+          env_file:
+            - /opt/flowise/.env
+          volumes:
+            - flowise_app_data:/root/.flowise
+
+      volumes:
+        flowise_postgres_data:
+        flowise_app_data:
+      EOF
+
+      echo "Stopping old service if present..."
+      systemctl stop flowise.service 2>/dev/null || true
+
+      echo "Cleaning old containers if present..."
+      cd /opt/flowise
+      podman-compose --env-file /root/flowise-demo.env down 2>/dev/null || true
+      podman rm -f flowise flowise-postgres 2>/dev/null || true
+
+      if [ "${FLOWISE_RESET_DATA_ON_BOOT}" = "true" ]; then
+        echo "Reset flag enabled. Removing Flowise data volumes..."
+        podman volume rm flowise_flowise_postgres_data 2>/dev/null || true
+        podman volume rm flowise_flowise_app_data 2>/dev/null || true
+        podman volume rm flowise_postgres_data 2>/dev/null || true
+        podman volume rm flowise_app_data 2>/dev/null || true
+      fi
+
+      echo "Freeing port ${FLOWISE_PORT} if needed..."
+      fuser -k "${FLOWISE_PORT}/tcp" 2>/dev/null || true
+
+      echo "Pulling images..."
+      echo "This can take a few minutes because the Flowise image is large."
+
+      for i in $(seq 1 5); do
+        if podman-compose --env-file /root/flowise-demo.env pull; then
+          break
+        fi
+
+        echo "Pull failed, retrying in 30s..."
+        sleep 30
+      done
+
+      echo "Starting Flowise stack..."
+
+      podman-compose --env-file /root/flowise-demo.env up -d
+
+      echo "Creating systemd service..."
+
+      cat > /etc/systemd/system/flowise.service <<EOF
+      [Unit]
+      Description=Flowise AI agent builder stack
+      Requires=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      WorkingDirectory=/opt/flowise
+      ExecStart=/usr/bin/podman-compose --env-file /root/flowise-demo.env up -d
+      ExecStop=/usr/bin/podman-compose --env-file /root/flowise-demo.env down
+      TimeoutStartSec=0
+
+      [Install]
+      WantedBy=multi-user.target
+      EOF
+
+      systemctl daemon-reload
+      systemctl enable flowise.service
+
+      echo "Waiting for Flowise..."
+
+      FLOWISE_READY=0
+
+      for i in $(seq 1 180); do
+        if curl -fsS "http://127.0.0.1:${FLOWISE_PORT}" >/dev/null 2>&1; then
+          FLOWISE_READY=1
+          echo "Flowise is reachable."
+          break
+        fi
+
+        if [ "$((i % 10))" -eq 0 ]; then
+          echo "Still waiting. Container status:"
+          podman ps -a || true
+
+          echo "Recent Flowise logs:"
+          podman logs --tail=80 flowise 2>/dev/null || true
+
+          echo "Recent Postgres logs:"
+          podman logs --tail=40 flowise-postgres 2>/dev/null || true
+        fi
+
+        echo "Waiting for Flowise... attempt $i/180"
+        sleep 3
+      done
+
+      if [ "$FLOWISE_READY" != "1" ]; then
+        echo "Flowise did not become reachable."
+        podman ps -a || true
+        podman logs --tail=200 flowise 2>/dev/null || true
+        podman logs --tail=120 flowise-postgres 2>/dev/null || true
+        exit 1
+      fi
+
+      echo "Installing Playwright for admin setup..."
+
+      cd "$ADMIN_SETUP_DIR"
+
+      cat > package.json <<'EOF'
+      {
+        "scripts": {
+          "setup": "node setup-flowise-admin.js"
+        },
+        "dependencies": {
+          "playwright": "^1.49.0"
+        }
+      }
+      EOF
+
+      npm install
+      npx playwright install --with-deps chromium
+
+      echo "Writing setup-flowise-admin.js..."
+
+      cat > /opt/flowise-admin-setup/setup-flowise-admin.js <<'EOF'
+      const { chromium } = require("playwright");
+
+      const FLOWISE_URL = process.env.FLOWISE_URL || "http://127.0.0.1:3000";
+      const FLOWISE_ADMIN_NAME = process.env.FLOWISE_ADMIN_NAME || "redu.cloud Admin";
+      const FLOWISE_ADMIN_EMAIL = process.env.FLOWISE_ADMIN_EMAIL || "admin@example.com";
+      const FLOWISE_ADMIN_PASSWORD = process.env.FLOWISE_ADMIN_PASSWORD || "ChangeMeStrong123!";
+
+      async function safeFill(locator, value, label) {
+        try {
+          await locator.waitFor({ state: "visible", timeout: 10000 });
+          await locator.fill(value);
+          console.log(`Filled ${label}`);
+          return true;
+        } catch (e) {
+          return false;
+        }
+      }
+
+      async function safeClick(locator, label) {
+        try {
+          await locator.waitFor({ state: "visible", timeout: 10000 });
+          await locator.click();
+          console.log(`Clicked ${label}`);
+          return true;
+        } catch (e) {
+          return false;
+        }
+      }
+
+      (async () => {
+        console.log(`Opening ${FLOWISE_URL}...`);
+
+        const browser = await chromium.launch({
+          headless: true
+        });
+
+        const page = await browser.newPage();
+
+        await page.goto(FLOWISE_URL, {
+          waitUntil: "domcontentloaded",
+          timeout: 120000
+        });
+
+        console.log("Waiting for Flowise UI inputs...");
+
+        await page.waitForSelector("input, body", {
+          state: "visible",
+          timeout: 120000
+        });
+
+        await page.waitForTimeout(3000);
+
+        const bodyText = await page.textContent("body").catch(() => "");
+
+        console.log("Page text preview:");
+        console.log((bodyText || "").slice(0, 1200));
+
+        if (
+          bodyText &&
+          (
+            bodyText.includes("Chatflows") ||
+            bodyText.includes("Agentflows") ||
+            bodyText.includes("Marketplaces")
+          ) &&
+          !bodyText.includes("Setup Account")
+        ) {
+          console.log("Flowise already appears to be initialized. Skipping setup.");
+          await browser.close();
+          process.exit(0);
+        }
+
+        console.log("Visible inputs detected. Inspecting inputs...");
+
+        const inputInfo = await page.locator("input").evaluateAll(inputs =>
+          inputs.map((input, index) => ({
+            index,
+            type: input.getAttribute("type"),
+            name: input.getAttribute("name"),
+            placeholder: input.getAttribute("placeholder"),
+            ariaLabel: input.getAttribute("aria-label"),
+            id: input.getAttribute("id"),
+            visible: !!(input.offsetWidth || input.offsetHeight || input.getClientRects().length)
+          }))
+        );
+
+        console.log(JSON.stringify(inputInfo, null, 2));
+
+        let filledName = false;
+        let filledEmail = false;
+
+        filledName =
+          await safeFill(page.getByLabel(/administrator name/i), FLOWISE_ADMIN_NAME, "administrator name by label") ||
+          await safeFill(page.getByLabel(/name/i).first(), FLOWISE_ADMIN_NAME, "administrator name by generic label");
+
+        filledEmail =
+          await safeFill(page.getByLabel(/administrator email/i), FLOWISE_ADMIN_EMAIL, "administrator email by label") ||
+          await safeFill(page.getByLabel(/email/i).first(), FLOWISE_ADMIN_EMAIL, "administrator email by generic label");
+
+        if (!filledName || !filledEmail) {
+          const visibleInputs = page.locator("input:visible");
+          const count = await visibleInputs.count();
+
+          console.log(`Visible input count: ${count}`);
+
+          if (count >= 4) {
+            if (!filledName) {
+              await visibleInputs.nth(0).fill(FLOWISE_ADMIN_NAME);
+              console.log("Filled administrator name by input order.");
+              filledName = true;
+            }
+
+            if (!filledEmail) {
+              await visibleInputs.nth(1).fill(FLOWISE_ADMIN_EMAIL);
+              console.log("Filled administrator email by input order.");
+              filledEmail = true;
+            }
+
+            await visibleInputs.nth(2).fill(FLOWISE_ADMIN_PASSWORD);
+            console.log("Filled password by input order.");
+
+            await visibleInputs.nth(3).fill(FLOWISE_ADMIN_PASSWORD);
+            console.log("Filled confirm password by input order.");
+          }
+        }
+
+        const passwordInputs = page.locator('input[type="password"]:visible');
+        const passwordCount = await passwordInputs.count();
+
+        if (passwordCount >= 1) {
+          await passwordInputs.nth(0).fill(FLOWISE_ADMIN_PASSWORD);
+          console.log("Filled password by password selector.");
+        }
+
+        if (passwordCount >= 2) {
+          await passwordInputs.nth(1).fill(FLOWISE_ADMIN_PASSWORD);
+          console.log("Filled confirm password by password selector.");
+        }
+
+        if (!filledName || !filledEmail || passwordCount < 2) {
+          console.log("Could not fill all setup fields.");
+          console.log({
+            filledName,
+            filledEmail,
+            passwordCount
+          });
+
+          await page.screenshot({
+            path: "/root/flowise-setup-failed.png",
+            fullPage: true
+          });
+
+          await browser.close();
+          process.exit(1);
+        }
+
+        const clicked =
+          await safeClick(page.getByRole("button", { name: /setup/i }), "setup button") ||
+          await safeClick(page.getByRole("button", { name: /create/i }), "create button") ||
+          await safeClick(page.getByRole("button", { name: /submit/i }), "submit button") ||
+          await safeClick(page.locator('button[type="submit"]').first(), "submit button by type") ||
+          await safeClick(page.locator("button").last(), "last button fallback");
+
+        if (!clicked) {
+          console.log("Could not find submit button.");
+
+          await page.screenshot({
+            path: "/root/flowise-setup-failed.png",
+            fullPage: true
+          });
+
+          await browser.close();
+          process.exit(1);
+        }
+
+        console.log("Submitted setup/login form. Waiting...");
+
+        await page.waitForTimeout(10000);
+
+        const finalText = await page.textContent("body").catch(() => "");
+
+        console.log("Final page preview:");
+        console.log((finalText || "").slice(0, 1200));
+
+        await page.screenshot({
+          path: "/root/flowise-setup-result.png",
+          fullPage: true
+        });
+
+        console.log("Flowise setup automation finished.");
+        console.log(`Login email: ${FLOWISE_ADMIN_EMAIL}`);
+        console.log(`Password: ${FLOWISE_ADMIN_PASSWORD}`);
+
+        await browser.close();
+      })();
+      EOF
+
+      echo "Running Flowise admin setup..."
+
+      set -a
+      source /root/flowise-demo.env
+      set +a
+
+      FLOWISE_URL="http://127.0.0.1:${FLOWISE_PORT}" \
+      node /opt/flowise-admin-setup/setup-flowise-admin.js || {
+        echo "WARNING: Flowise admin setup failed."
+        echo "Check /root/flowise-setup-failed.png if it exists."
+        echo "Continuing because Flowise itself is running."
+      }
+
+      echo "Writing Flowise API helper scripts..."
+
+      cat > /root/flowise-api-context.sh <<'EOF'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/flowise-demo.env
+
+      FLOWISE_URL="${FLOWISE_URL:-http://127.0.0.1:${FLOWISE_PORT:-3000}}"
+      COOKIE_JAR="${COOKIE_JAR:-/root/flowise-cookies.txt}"
+      CONTEXT_FILE="${CONTEXT_FILE:-/root/flowise-api-context.env}"
+
+      LOGIN_RESPONSE="$(curl -sS -c "$COOKIE_JAR" -X POST "$FLOWISE_URL/api/v1/auth/login" \
+        -H "Content-Type: application/json" \
+        -d "$(jq -n \
+          --arg email "$FLOWISE_ADMIN_EMAIL" \
+          --arg password "$FLOWISE_ADMIN_PASSWORD" \
+          '{ email: $email, password: $password }')")"
+
+      WORKSPACE_ID="$(echo "$LOGIN_RESPONSE" | jq -r '.activeWorkspaceId // empty')"
+      ORGANIZATION_ID="$(echo "$LOGIN_RESPONSE" | jq -r '.activeOrganizationId // empty')"
+      TOKEN="$(awk '$6 == "token" {print $7}' "$COOKIE_JAR")"
+
+      if [ -z "$WORKSPACE_ID" ] || [ -z "$ORGANIZATION_ID" ] || [ -z "$TOKEN" ]; then
+        echo "ERROR: Could not get Flowise API context."
+        echo "Login response:"
+        echo "$LOGIN_RESPONSE" | jq . || echo "$LOGIN_RESPONSE"
+        echo
+        echo "Cookie jar:"
+        cat "$COOKIE_JAR" || true
+        exit 1
+      fi
+
+      cat > "$CONTEXT_FILE" <<CTX
+      FLOWISE_URL="${FLOWISE_URL}"
+      COOKIE_JAR="${COOKIE_JAR}"
+      WORKSPACE_ID="${WORKSPACE_ID}"
+      ORGANIZATION_ID="${ORGANIZATION_ID}"
+      TOKEN="${TOKEN}"
+      CTX
+
+      chmod 600 "$CONTEXT_FILE"
+
+      echo "Flowise API context saved to: $CONTEXT_FILE"
+      echo "Workspace: $WORKSPACE_ID"
+      echo "Organization: $ORGANIZATION_ID"
+      EOF
+
+      chmod +x /root/flowise-api-context.sh
+
+      cat > /root/flowise-list-chatflows.sh <<'EOF'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      CONTEXT_FILE="${CONTEXT_FILE:-/root/flowise-api-context.env}"
+
+      if [ ! -f "$CONTEXT_FILE" ]; then
+        /root/flowise-api-context.sh >/dev/null
+      fi
+
+      source "$CONTEXT_FILE"
+
+      RESPONSE="$(curl -sS "$FLOWISE_URL/api/v1/chatflows" \
+        -b "$COOKIE_JAR" \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "x-workspace-id: $WORKSPACE_ID" \
+        -H "x-organization-id: $ORGANIZATION_ID" \
+        -H "x-request-from: internal")"
+
+      if echo "$RESPONSE" | jq -e 'type == "array"' >/dev/null 2>&1; then
+        if [ "$(echo "$RESPONSE" | jq 'length')" = "0" ]; then
+          echo "No chatflows found."
+        else
+          echo "$RESPONSE" | jq -r '.[] | "\(.name) -> \(.id)"'
+        fi
+      else
+        echo "$RESPONSE" | jq . || echo "$RESPONSE"
+      fi
+      EOF
+
+      chmod +x /root/flowise-list-chatflows.sh
+
+      cat > /root/flowise-create-ollama-chatflow.sh <<'EOF'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/flowise-demo.env
+
+      CONTEXT_FILE="${CONTEXT_FILE:-/root/flowise-api-context.env}"
+
+      if [ ! -f "$CONTEXT_FILE" ]; then
+        /root/flowise-api-context.sh >/dev/null
+      fi
+
+      source "$CONTEXT_FILE"
+
+      CHATFLOW_NAME="${CHATFLOW_NAME:-${FLOWISE_CHATFLOW_NAME:-redu.cloud Private Ollama Chat}}"
+      OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-${OLLAMA_URL:-http://YOUR_OLLAMA_VM_IP:11434}}"
+      OLLAMA_MODEL="${OLLAMA_MODEL:-${OLLAMA_MODEL:-deepseek-r1:1.5b}}"
+
+      if echo "$OLLAMA_BASE_URL" | grep -q "YOUR_OLLAMA_VM_IP"; then
+        echo "Skipping chatflow creation because OLLAMA_URL is still a placeholder:"
+        echo "$OLLAMA_BASE_URL"
+        echo
+        echo "Set OLLAMA_URL in /root/flowise-demo.env, then run:"
+        echo "  /root/flowise-create-ollama-chatflow.sh"
+        exit 0
+      fi
+
+      EXISTING_ID="$(curl -sS "$FLOWISE_URL/api/v1/chatflows" \
+        -b "$COOKIE_JAR" \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "x-workspace-id: $WORKSPACE_ID" \
+        -H "x-organization-id: $ORGANIZATION_ID" \
+        -H "x-request-from: internal" \
+        | jq -r --arg name "$CHATFLOW_NAME" '.[]? | select(.name == $name) | .id' | head -1)"
+
+      if [ -n "$EXISTING_ID" ]; then
+        echo "Chatflow already exists:"
+        echo "$CHATFLOW_NAME -> $EXISTING_ID"
+
+        if ! grep -q '^FLOWISE_CHATFLOW_ID=' /root/flowise-demo.env; then
+          echo "FLOWISE_CHATFLOW_ID=${EXISTING_ID}" >> /root/flowise-demo.env
+        else
+          sed -i "s|^FLOWISE_CHATFLOW_ID=.*|FLOWISE_CHATFLOW_ID=${EXISTING_ID}|" /root/flowise-demo.env
+        fi
+
+        exit 0
+      fi
+
+      echo "Creating Flowise chatflow:"
+      echo "Name: ${CHATFLOW_NAME}"
+      echo "Ollama URL: ${OLLAMA_BASE_URL}"
+      echo "Model: ${OLLAMA_MODEL}"
+
+      FLOW_DATA="$(jq -n \
+        --arg ollamaBaseUrl "$OLLAMA_BASE_URL" \
+        --arg ollamaModel "$OLLAMA_MODEL" \
+        '{
+          nodes: [
+            {
+              id: "chatOllama_0",
+              position: { x: 250, y: 100 },
+              type: "customNode",
+              data: {
+                id: "chatOllama_0",
+                label: "ChatOllama",
+                name: "chatOllama",
+                version: 4,
+                type: "ChatOllama",
+                baseClasses: ["ChatOllama", "BaseChatModel", "BaseLanguageModel", "Runnable"],
+                category: "Chat Models",
+                description: "Wrapper around Ollama large language models",
+                inputParams: [],
+                inputAnchors: [],
+                inputs: {
+                  baseUrl: $ollamaBaseUrl,
+                  modelName: $ollamaModel,
+                  temperature: "0.7"
+                },
+                outputAnchors: [
+                  {
+                    id: "chatOllama_0-output-chatOllama-ChatOllama|BaseChatModel|BaseLanguageModel|Runnable",
+                    name: "chatOllama",
+                    label: "ChatOllama",
+                    description: "ChatOllama",
+                    type: "ChatOllama | BaseChatModel | BaseLanguageModel | Runnable"
+                  }
+                ],
+                outputs: {},
+                selected: false
+              },
+              width: 300,
+              height: 400,
+              selected: false,
+              positionAbsolute: { x: 250, y: 100 },
+              dragging: false
+            },
+            {
+              id: "bufferMemory_0",
+              position: { x: 250, y: 550 },
+              type: "customNode",
+              data: {
+                id: "bufferMemory_0",
+                label: "Buffer Memory",
+                name: "bufferMemory",
+                version: 2,
+                type: "BufferMemory",
+                baseClasses: ["BufferMemory", "BaseChatMemory", "BaseMemory"],
+                category: "Memory",
+                description: "Remembers previous conversational back and forths directly",
+                inputParams: [],
+                inputAnchors: [],
+                inputs: {
+                  memoryKey: "chat_history",
+                  inputKey: "input",
+                  outputKey: "text",
+                  returnMessages: true
+                },
+                outputAnchors: [
+                  {
+                    id: "bufferMemory_0-output-bufferMemory-BufferMemory|BaseChatMemory|BaseMemory",
+                    name: "bufferMemory",
+                    label: "Buffer Memory",
+                    description: "Buffer Memory",
+                    type: "BufferMemory | BaseChatMemory | BaseMemory"
+                  }
+                ],
+                outputs: {},
+                selected: false
+              },
+              width: 300,
+              height: 300,
+              selected: false,
+              positionAbsolute: { x: 250, y: 550 },
+              dragging: false
+            },
+            {
+              id: "conversationChain_0",
+              position: { x: 750, y: 220 },
+              type: "customNode",
+              data: {
+                id: "conversationChain_0",
+                label: "Conversation Chain",
+                name: "conversationChain",
+                version: 2,
+                type: "ConversationChain",
+                baseClasses: ["ConversationChain", "BaseChain", "Runnable"],
+                category: "Chains",
+                description: "Chat models specific conversational chain with memory",
+                inputParams: [],
+                inputAnchors: [
+                  {
+                    label: "Chat Model",
+                    name: "model",
+                    type: "BaseChatModel",
+                    id: "conversationChain_0-input-model-BaseChatModel"
+                  },
+                  {
+                    label: "Memory",
+                    name: "memory",
+                    type: "BaseMemory",
+                    id: "conversationChain_0-input-memory-BaseMemory"
+                  }
+                ],
+                inputs: {
+                  model: "{{chatOllama_0.data.instance}}",
+                  memory: "{{bufferMemory_0.data.instance}}",
+                  systemMessagePrompt: "You are a helpful AI assistant running privately on redu.cloud infrastructure. Keep answers practical, clear, and startup-focused."
+                },
+                outputAnchors: [
+                  {
+                    id: "conversationChain_0-output-conversationChain-ConversationChain|BaseChain|Runnable",
+                    name: "conversationChain",
+                    label: "Conversation Chain",
+                    type: "ConversationChain | BaseChain | Runnable"
+                  }
+                ],
+                outputs: {},
+                selected: false
+              },
+              width: 300,
+              height: 350,
+              selected: false,
+              positionAbsolute: { x: 750, y: 220 },
+              dragging: false
+            }
+          ],
+          edges: [
+            {
+              source: "chatOllama_0",
+              sourceHandle: "chatOllama_0-output-chatOllama-ChatOllama|BaseChatModel|BaseLanguageModel|Runnable",
+              target: "conversationChain_0",
+              targetHandle: "conversationChain_0-input-model-BaseChatModel",
+              type: "buttonedge",
+              id: "chatOllama_0-conversationChain_0-model"
+            },
+            {
+              source: "bufferMemory_0",
+              sourceHandle: "bufferMemory_0-output-bufferMemory-BufferMemory|BaseChatMemory|BaseMemory",
+              target: "conversationChain_0",
+              targetHandle: "conversationChain_0-input-memory-BaseMemory",
+              type: "buttonedge",
+              id: "bufferMemory_0-conversationChain_0-memory"
+            }
+          ],
+          viewport: { x: 0, y: 0, zoom: 1 }
+        }')"
+
+      PAYLOAD="$(jq -n \
+        --arg name "$CHATFLOW_NAME" \
+        --arg flowData "$FLOW_DATA" \
+        '{
+          name: $name,
+          flowData: $flowData,
+          deployed: false,
+          isPublic: false,
+          type: "CHATFLOW",
+          category: "redu.cloud templates",
+          chatbotConfig: "{}",
+          apiConfig: "{}",
+          analytic: "{}",
+          speechToText: "{}"
+        }')"
+
+      RESPONSE="$(curl -sS -X POST "$FLOWISE_URL/api/v1/chatflows" \
+        -b "$COOKIE_JAR" \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "x-workspace-id: $WORKSPACE_ID" \
+        -H "x-organization-id: $ORGANIZATION_ID" \
+        -H "x-request-from: internal" \
+        -H "Content-Type: application/json" \
+        -d "$PAYLOAD")"
+
+      echo "$RESPONSE" | jq
+
+      CHATFLOW_ID="$(echo "$RESPONSE" | jq -r '.id // empty')"
+
+      if [ -n "$CHATFLOW_ID" ]; then
+        echo
+        echo "Created chatflow:"
+        echo "Name: $CHATFLOW_NAME"
+        echo "ID: $CHATFLOW_ID"
+
+        if ! grep -q '^FLOWISE_CHATFLOW_ID=' /root/flowise-demo.env; then
+          echo "FLOWISE_CHATFLOW_ID=${CHATFLOW_ID}" >> /root/flowise-demo.env
+        else
+          sed -i "s|^FLOWISE_CHATFLOW_ID=.*|FLOWISE_CHATFLOW_ID=${CHATFLOW_ID}|" /root/flowise-demo.env
+        fi
+
+        echo
+        echo "Saved FLOWISE_CHATFLOW_ID to /root/flowise-demo.env"
+      else
+        echo
+        echo "Could not extract chatflow ID."
+        exit 1
+      fi
+      EOF
+
+      chmod +x /root/flowise-create-ollama-chatflow.sh
+
+      cat > /root/flowise-run-chatflow.sh <<'EOF'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/flowise-demo.env
+
+      CONTEXT_FILE="${CONTEXT_FILE:-/root/flowise-api-context.env}"
+      CHATFLOW_ID="${CHATFLOW_ID:-${FLOWISE_CHATFLOW_ID:-}}"
+      QUESTION="${1:-What is redu.cloud useful for?}"
+
+      if [ ! -f "$CONTEXT_FILE" ]; then
+        /root/flowise-api-context.sh >/dev/null
+      fi
+
+      source "$CONTEXT_FILE"
+
+      if [ -z "$CHATFLOW_ID" ]; then
+        echo "ERROR: CHATFLOW_ID or FLOWISE_CHATFLOW_ID is required."
+        echo
+        echo "List chatflows:"
+        echo "  /root/flowise-list-chatflows.sh"
+        echo
+        echo "Run:"
+        echo "  CHATFLOW_ID=your-id /root/flowise-run-chatflow.sh \"Your question\""
+        exit 1
+      fi
+
+      curl -sS -X POST "$FLOWISE_URL/api/v1/prediction/$CHATFLOW_ID" \
+        -b "$COOKIE_JAR" \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "x-workspace-id: $WORKSPACE_ID" \
+        -H "x-organization-id: $ORGANIZATION_ID" \
+        -H "x-request-from: internal" \
+        -H "Content-Type: application/json" \
+        -d "$(jq -n \
+          --arg question "$QUESTION" \
+          '{
+            question: $question,
+            streaming: false
+          }')" | jq
+      EOF
+
+      chmod +x /root/flowise-run-chatflow.sh
+
+      echo "Getting Flowise API context..."
+
+      /root/flowise-api-context.sh || {
+        echo "WARNING: Could not create Flowise API context."
+        echo "Skipping chatflow creation."
+      }
+
+      if [ "${FLOWISE_AUTO_CREATE_CHATFLOW}" = "true" ]; then
+        echo "Auto-create chatflow is enabled."
+
+        /root/flowise-create-ollama-chatflow.sh || {
+          echo "WARNING: Chatflow creation failed or skipped."
+        }
+      else
+        echo "Auto-create chatflow is disabled."
+      fi
+
+      echo "Writing helper scripts..."
+
+      cat > /root/flowise-status.sh <<'EOF'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/flowise-demo.env
+
+      echo "Containers:"
+      podman ps -a --filter name=flowise
+
+      echo
+      echo "Local UI check:"
+      curl -fsS "http://127.0.0.1:${FLOWISE_PORT}" >/dev/null
+      echo "Flowise UI is reachable locally."
+
+      echo
+      echo "Public URL:"
+      echo "${FLOWISE_PUBLIC_URL}"
+
+      echo
+      echo "Admin login:"
+      echo "Email: ${FLOWISE_ADMIN_EMAIL}"
+      echo "Password: ${FLOWISE_ADMIN_PASSWORD}"
+
+      echo
+      echo "Chatflows:"
+      /root/flowise-list-chatflows.sh || true
+
+      echo
+      echo "Recent Flowise logs:"
+      podman logs --tail=120 flowise || true
+      EOF
+
+      chmod +x /root/flowise-status.sh
+
+      cat > /root/flowise-test.sh <<'EOF'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/flowise-demo.env
+
+      echo "Testing Flowise local UI..."
+      curl -fsS "http://127.0.0.1:${FLOWISE_PORT}" >/dev/null
+
+      echo "OK: Flowise is reachable locally."
+      echo
+      echo "Open:"
+      echo "${FLOWISE_PUBLIC_URL}"
+      echo
+      echo "Login:"
+      echo "Email: ${FLOWISE_ADMIN_EMAIL}"
+      echo "Password: ${FLOWISE_ADMIN_PASSWORD}"
+
+      echo
+      echo "Chatflows:"
+      /root/flowise-list-chatflows.sh || true
+
+      if [ -n "${FLOWISE_CHATFLOW_ID:-}" ]; then
+        echo
+        echo "Testing starter chatflow..."
+        /root/flowise-run-chatflow.sh "Explain in one short paragraph what this private AI agent builder is useful for." || true
+      fi
+      EOF
+
+      chmod +x /root/flowise-test.sh
+
+      cat > /root/flowise-restart.sh <<'EOF'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      cd /opt/flowise
+      podman-compose --env-file /root/flowise-demo.env down
+      podman-compose --env-file /root/flowise-demo.env up -d
+
+      rm -f /root/flowise-api-context.env /root/flowise-cookies.txt
+
+      echo "Flowise restarted."
+      podman ps -a --filter name=flowise
+      EOF
+
+      chmod +x /root/flowise-restart.sh
+
+      cat > /root/flowise-admin-setup.sh <<'EOF'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/flowise-demo.env
+
+      cd /opt/flowise-admin-setup
+
+      FLOWISE_URL="http://127.0.0.1:${FLOWISE_PORT}" \
+      node /opt/flowise-admin-setup/setup-flowise-admin.js
+      EOF
+
+      chmod +x /root/flowise-admin-setup.sh
+
+      cat > /root/FLOWISE_README.txt <<EOF
+      redu.cloud Flowise AI Agent Builder template is ready.
+
+      UI:
+        ${FLOWISE_PUBLIC_URL}
+
+      Login:
+        Email: ${FLOWISE_ADMIN_EMAIL}
+        Password: ${FLOWISE_ADMIN_PASSWORD}
+
+      Starter chatflow:
+        Name: ${FLOWISE_CHATFLOW_NAME}
+        ID: ${FLOWISE_CHATFLOW_ID:-not-created-yet}
+
+      Ollama:
+        URL: ${OLLAMA_URL}
+        Model: ${OLLAMA_MODEL}
+
+      What this template gives you:
+        - Flowise visual AI agent/workflow builder
+        - PostgreSQL persistence
+        - Podman deployment
+        - Systemd service
+        - Automated initial admin/organization setup
+        - API context helper with workspace/org headers
+        - Optional auto-created Ollama chatflow
+        - Buffer Memory included
+        - Instance-side prediction test script
+
+      Starter flow:
+        ChatOllama
+        Buffer Memory
+        Conversation Chain
+
+      Suggested redu.cloud AI stack connections:
+
+        Ollama:
+          ${OLLAMA_URL}
+
+        Qdrant:
+          ${QDRANT_URL}
+
+        Qdrant API key:
+          ${QDRANT_API_KEY}
+
+        Firecrawl protected bridge:
+          ${FIRECRAWL_BRIDGE_URL}
+
+        Firecrawl bridge API key:
+          ${FIRECRAWL_BRIDGE_API_KEY}
+
+      Useful commands:
+        /root/flowise-status.sh
+        /root/flowise-test.sh
+        /root/flowise-restart.sh
+        /root/flowise-admin-setup.sh
+        /root/flowise-api-context.sh
+        /root/flowise-list-chatflows.sh
+        /root/flowise-create-ollama-chatflow.sh
+        /root/flowise-run-chatflow.sh "Your question here"
+
+      App directory:
+        /opt/flowise
+
+      Env files:
+        /root/flowise-demo.env
+        /opt/flowise/.env
+        /root/flowise-api-context.env
+
+      Logs:
+        /var/log/flowise-bootstrap.log
+        /var/log/flowise-bootstrap-runcmd.log
+        podman logs -f flowise
+        podman logs -f flowise-postgres
+
+      Screenshots:
+        /root/flowise-setup-result.png
+        /root/flowise-setup-failed.png
+
+      Service:
+        systemctl status flowise.service
+        systemctl restart flowise.service
+
+      Security notes:
+        - Change FLOWISE_ADMIN_PASSWORD before production use.
+        - Put this behind HTTPS / Nginx Proxy Manager for real users.
+        - Avoid exposing raw internal AI services without API keys or firewall rules.
+      EOF
+
+      chmod 600 /root/FLOWISE_README.txt
+
+      echo "========================================"
+      echo " Flowise deployment finished"
+      echo " UI: ${FLOWISE_PUBLIC_URL}"
+      echo " Login email: ${FLOWISE_ADMIN_EMAIL}"
+      echo " Login password: ${FLOWISE_ADMIN_PASSWORD}"
+      echo " README: /root/FLOWISE_README.txt"
+      echo " Logs: ${LOG_FILE}"
+      echo "========================================"
+
+runcmd:
+  - [ bash, -lc, "/usr/local/bin/flowise_bootstrap.sh > /var/log/flowise-bootstrap-runcmd.log 2>&1" ]

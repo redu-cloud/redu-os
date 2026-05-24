@@ -1,0 +1,770 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+  - podman
+  - podman-compose
+  - uidmap
+  - curl
+  - jq
+  - openssl
+  - nodejs
+  - npm
+  - psmisc
+
+write_files:
+  - path: /root/firecrawl-demo.env
+    permissions: "0600"
+    owner: root:root
+    content: |
+      # Public URL for users.
+      # Leave empty to auto-detect public IP and use http://IP:3003
+      FIRECRAWL_PUBLIC_URL=""
+
+      # Raw Firecrawl API is bound to localhost only.
+      # Users should call the protected bridge on FIRECRAWL_BRIDGE_PORT.
+      FIRECRAWL_INTERNAL_PORT=3002
+      FIRECRAWL_BRIDGE_PORT=3003
+
+      # Protected bridge API key.
+      # Leave AUTO_GENERATE for cloud-init.
+      FIRECRAWL_BRIDGE_API_KEY=AUTO_GENERATE
+
+      # Queue/admin secret.
+      BULL_AUTH_KEY=AUTO_GENERATE
+
+      # IMPORTANT:
+      # Keep POSTGRES_DB=postgres.
+      # nuq-postgres uses pg_cron and expects cron database to be postgres.
+      POSTGRES_USER=firecrawl
+      POSTGRES_PASSWORD=AUTO_GENERATE
+      POSTGRES_DB=postgres
+
+      # Firecrawl behavior
+      USE_DB_AUTHENTICATION=false
+      LOGGING_LEVEL=INFO
+
+      # Demo VM performance defaults
+      NUM_WORKERS_PER_QUEUE=4
+      CRAWL_CONCURRENT_REQUESTS=5
+      MAX_CONCURRENT_JOBS=3
+      BROWSER_POOL_SIZE=3
+
+      # Optional LLM settings.
+      # Scrape/crawl/map work without these.
+      OPENAI_API_KEY=""
+      OPENAI_BASE_URL=""
+      MODEL_NAME=""
+      MODEL_EMBEDDING_NAME=""
+
+      # Optional proxy settings
+      PROXY_SERVER=""
+      PROXY_USERNAME=""
+      PROXY_PASSWORD=""
+
+      # Lightweight bootstrap test target.
+      DEMO_SCRAPE_URL="https://example.com"
+
+      # Set true only if reusing a broken test VM and you want to wipe Firecrawl data.
+      FIRECRAWL_RESET_DATA_ON_BOOT=false
+
+  - path: /etc/containers/registries.conf
+    permissions: "0644"
+    owner: root:root
+    content: |
+      unqualified-search-registries = ["docker.io", "ghcr.io"]
+
+      [[registry]]
+      prefix = "docker.io"
+      location = "docker.io"
+
+      [[registry]]
+      prefix = "ghcr.io"
+      location = "ghcr.io"
+
+  - path: /usr/local/bin/firecrawl_bootstrap.sh
+    permissions: "0755"
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      LOG_FILE="/var/log/firecrawl-bootstrap.log"
+      exec > >(tee -a "$LOG_FILE") 2>&1
+
+      echo "========================================"
+      echo " redu.cloud Firecrawl bootstrap"
+      echo " Started: $(date -Is)"
+      echo "========================================"
+
+      source /root/firecrawl-demo.env
+
+      APP_DIR="/opt/firecrawl"
+      BRIDGE_DIR="/opt/firecrawl-bridge"
+
+      mkdir -p "$APP_DIR"
+      mkdir -p "$BRIDGE_DIR"
+
+      if [ -z "${FIRECRAWL_PUBLIC_URL:-}" ]; then
+        PUBLIC_IP="$(curl -fsS --max-time 10 https://api.ipify.org || true)"
+        if [ -z "$PUBLIC_IP" ]; then
+          PUBLIC_IP="$(hostname -I | awk '{print $1}')"
+        fi
+        FIRECRAWL_PUBLIC_URL="http://${PUBLIC_IP}:${FIRECRAWL_BRIDGE_PORT}"
+      fi
+
+      if [ "${FIRECRAWL_BRIDGE_API_KEY:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        FIRECRAWL_BRIDGE_API_KEY="$(openssl rand -hex 32)"
+      fi
+
+      if [ "${BULL_AUTH_KEY:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        BULL_AUTH_KEY="$(openssl rand -hex 24)"
+      fi
+
+      if [ "${POSTGRES_PASSWORD:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+      fi
+
+      cat > /root/firecrawl-demo.env <<EOF
+      FIRECRAWL_PUBLIC_URL="${FIRECRAWL_PUBLIC_URL}"
+      FIRECRAWL_INTERNAL_PORT=${FIRECRAWL_INTERNAL_PORT}
+      FIRECRAWL_BRIDGE_PORT=${FIRECRAWL_BRIDGE_PORT}
+      FIRECRAWL_BRIDGE_API_KEY=${FIRECRAWL_BRIDGE_API_KEY}
+
+      BULL_AUTH_KEY=${BULL_AUTH_KEY}
+
+      POSTGRES_USER=${POSTGRES_USER}
+      POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      POSTGRES_DB=${POSTGRES_DB}
+
+      USE_DB_AUTHENTICATION=${USE_DB_AUTHENTICATION}
+      LOGGING_LEVEL=${LOGGING_LEVEL}
+
+      NUM_WORKERS_PER_QUEUE=${NUM_WORKERS_PER_QUEUE}
+      CRAWL_CONCURRENT_REQUESTS=${CRAWL_CONCURRENT_REQUESTS}
+      MAX_CONCURRENT_JOBS=${MAX_CONCURRENT_JOBS}
+      BROWSER_POOL_SIZE=${BROWSER_POOL_SIZE}
+
+      OPENAI_API_KEY="${OPENAI_API_KEY}"
+      OPENAI_BASE_URL="${OPENAI_BASE_URL}"
+      MODEL_NAME="${MODEL_NAME}"
+      MODEL_EMBEDDING_NAME="${MODEL_EMBEDDING_NAME}"
+
+      PROXY_SERVER="${PROXY_SERVER}"
+      PROXY_USERNAME="${PROXY_USERNAME}"
+      PROXY_PASSWORD="${PROXY_PASSWORD}"
+
+      DEMO_SCRAPE_URL="${DEMO_SCRAPE_URL}"
+      FIRECRAWL_RESET_DATA_ON_BOOT=${FIRECRAWL_RESET_DATA_ON_BOOT}
+      EOF
+
+      chmod 600 /root/firecrawl-demo.env
+      source /root/firecrawl-demo.env
+
+      cat > /opt/firecrawl/.env <<EOF
+      FIRECRAWL_INTERNAL_PORT=${FIRECRAWL_INTERNAL_PORT}
+      FIRECRAWL_BRIDGE_PORT=${FIRECRAWL_BRIDGE_PORT}
+
+      PORT=${FIRECRAWL_INTERNAL_PORT}
+      INTERNAL_PORT=${FIRECRAWL_INTERNAL_PORT}
+      HOST=0.0.0.0
+      ENV=local
+
+      REDIS_URL=redis://firecrawl-redis:6379
+      REDIS_RATE_LIMIT_URL=redis://firecrawl-redis:6379
+      PLAYWRIGHT_MICROSERVICE_URL=http://firecrawl-playwright:3000/scrape
+
+      POSTGRES_USER=${POSTGRES_USER}
+      POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      POSTGRES_DB=${POSTGRES_DB}
+      POSTGRES_HOST=firecrawl-postgres
+      POSTGRES_PORT=5432
+
+      USE_DB_AUTHENTICATION=${USE_DB_AUTHENTICATION}
+
+      NUM_WORKERS_PER_QUEUE=${NUM_WORKERS_PER_QUEUE}
+      CRAWL_CONCURRENT_REQUESTS=${CRAWL_CONCURRENT_REQUESTS}
+      MAX_CONCURRENT_JOBS=${MAX_CONCURRENT_JOBS}
+      BROWSER_POOL_SIZE=${BROWSER_POOL_SIZE}
+
+      OPENAI_API_KEY=${OPENAI_API_KEY}
+      OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      MODEL_NAME=${MODEL_NAME}
+      MODEL_EMBEDDING_NAME=${MODEL_EMBEDDING_NAME}
+
+      BULL_AUTH_KEY=${BULL_AUTH_KEY}
+      LOGGING_LEVEL=${LOGGING_LEVEL}
+
+      PROXY_SERVER=${PROXY_SERVER}
+      PROXY_USERNAME=${PROXY_USERNAME}
+      PROXY_PASSWORD=${PROXY_PASSWORD}
+
+      BLOCK_MEDIA=true
+      ALLOW_LOCAL_WEBHOOKS=false
+      EOF
+
+      chmod 600 /opt/firecrawl/.env
+
+      cat > /opt/firecrawl/podman-compose.yml <<'EOF'
+      version: "3.8"
+
+      services:
+        firecrawl-redis:
+          image: docker.io/redis:alpine
+          container_name: firecrawl-redis
+          restart: unless-stopped
+          command: redis-server --bind 0.0.0.0
+          networks:
+            - firecrawl-backend
+
+        firecrawl-rabbitmq:
+          image: docker.io/rabbitmq:3-management
+          container_name: firecrawl-rabbitmq
+          restart: unless-stopped
+          networks:
+            - firecrawl-backend
+          healthcheck:
+            test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+            interval: 10s
+            timeout: 5s
+            retries: 30
+            start_period: 30s
+
+        firecrawl-postgres:
+          image: ghcr.io/firecrawl/nuq-postgres:latest
+          container_name: firecrawl-postgres
+          restart: unless-stopped
+          environment:
+            POSTGRES_USER: ${POSTGRES_USER}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+            POSTGRES_DB: ${POSTGRES_DB}
+          volumes:
+            - firecrawl_postgres_data:/var/lib/postgresql/data
+          networks:
+            - firecrawl-backend
+
+        firecrawl-playwright:
+          image: ghcr.io/firecrawl/playwright-service:latest
+          container_name: firecrawl-playwright
+          restart: unless-stopped
+          environment:
+            PORT: 3000
+            PROXY_SERVER: ${PROXY_SERVER}
+            PROXY_USERNAME: ${PROXY_USERNAME}
+            PROXY_PASSWORD: ${PROXY_PASSWORD}
+            ALLOW_LOCAL_WEBHOOKS: ${ALLOW_LOCAL_WEBHOOKS}
+            BLOCK_MEDIA: ${BLOCK_MEDIA}
+            MAX_CONCURRENT_PAGES: ${CRAWL_CONCURRENT_REQUESTS}
+          networks:
+            - firecrawl-backend
+          depends_on:
+            - firecrawl-redis
+
+        firecrawl-api:
+          image: ghcr.io/firecrawl/firecrawl:latest
+          container_name: firecrawl-api
+          restart: unless-stopped
+          depends_on:
+            - firecrawl-redis
+            - firecrawl-rabbitmq
+            - firecrawl-postgres
+            - firecrawl-playwright
+          ports:
+            - "127.0.0.1:${FIRECRAWL_INTERNAL_PORT}:${FIRECRAWL_INTERNAL_PORT}"
+          environment:
+            HOST: 0.0.0.0
+            PORT: ${FIRECRAWL_INTERNAL_PORT}
+            INTERNAL_PORT: ${FIRECRAWL_INTERNAL_PORT}
+            ENV: local
+
+            REDIS_URL: redis://firecrawl-redis:6379
+            REDIS_RATE_LIMIT_URL: redis://firecrawl-redis:6379
+            PLAYWRIGHT_MICROSERVICE_URL: http://firecrawl-playwright:3000/scrape
+
+            POSTGRES_USER: ${POSTGRES_USER}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+            POSTGRES_DB: ${POSTGRES_DB}
+            POSTGRES_HOST: firecrawl-postgres
+            POSTGRES_PORT: 5432
+
+            USE_DB_AUTHENTICATION: ${USE_DB_AUTHENTICATION}
+
+            NUM_WORKERS_PER_QUEUE: ${NUM_WORKERS_PER_QUEUE}
+            CRAWL_CONCURRENT_REQUESTS: ${CRAWL_CONCURRENT_REQUESTS}
+            MAX_CONCURRENT_JOBS: ${MAX_CONCURRENT_JOBS}
+            BROWSER_POOL_SIZE: ${BROWSER_POOL_SIZE}
+
+            OPENAI_API_KEY: ${OPENAI_API_KEY}
+            OPENAI_BASE_URL: ${OPENAI_BASE_URL}
+            MODEL_NAME: ${MODEL_NAME}
+            MODEL_EMBEDDING_NAME: ${MODEL_EMBEDDING_NAME}
+
+            BULL_AUTH_KEY: ${BULL_AUTH_KEY}
+            LOGGING_LEVEL: ${LOGGING_LEVEL}
+
+            NUQ_RABBITMQ_URL: amqp://firecrawl-rabbitmq:5672
+            HARNESS_STARTUP_TIMEOUT_MS: 60000
+          command: node dist/src/harness.js --start-docker
+          networks:
+            - firecrawl-backend
+
+      networks:
+        firecrawl-backend:
+          driver: bridge
+
+      volumes:
+        firecrawl_postgres_data:
+      EOF
+
+      echo "Stopping old services if present..."
+      systemctl stop firecrawl-bridge.service 2>/dev/null || true
+      systemctl stop firecrawl.service 2>/dev/null || true
+
+      echo "Cleaning old containers if present..."
+      podman rm -f \
+        firecrawl-api \
+        firecrawl-playwright \
+        firecrawl-postgres \
+        firecrawl-rabbitmq \
+        firecrawl-redis \
+        2>/dev/null || true
+
+      if [ "${FIRECRAWL_RESET_DATA_ON_BOOT}" = "true" ]; then
+        echo "Reset flag enabled. Removing Firecrawl data volumes..."
+        podman volume rm firecrawl_firecrawl_postgres_data 2>/dev/null || true
+        podman volume rm firecrawl_postgres_data 2>/dev/null || true
+      fi
+
+      echo "Freeing ports if needed..."
+      fuser -k "${FIRECRAWL_INTERNAL_PORT}/tcp" 2>/dev/null || true
+      fuser -k "${FIRECRAWL_BRIDGE_PORT}/tcp" 2>/dev/null || true
+
+      echo "Pulling Firecrawl images..."
+      cd /opt/firecrawl
+
+      for i in $(seq 1 5); do
+        if podman-compose --env-file /opt/firecrawl/.env pull; then
+          break
+        fi
+        echo "Pull failed, retrying in 30s..."
+        sleep 30
+      done
+
+      echo "Starting Firecrawl dependencies..."
+      podman-compose --env-file /opt/firecrawl/.env up -d \
+        firecrawl-redis \
+        firecrawl-rabbitmq \
+        firecrawl-postgres \
+        firecrawl-playwright
+
+      echo "Waiting for RabbitMQ health..."
+      for i in $(seq 1 90); do
+        RABBIT_STATUS="$(podman inspect -f '{{.State.Health.Status}}' firecrawl-rabbitmq 2>/dev/null || true)"
+        echo "RabbitMQ health: ${RABBIT_STATUS:-unknown}"
+
+        if [ "$RABBIT_STATUS" = "healthy" ]; then
+          break
+        fi
+
+        sleep 5
+      done
+
+      RABBIT_STATUS="$(podman inspect -f '{{.State.Health.Status}}' firecrawl-rabbitmq 2>/dev/null || true)"
+      if [ "$RABBIT_STATUS" != "healthy" ]; then
+        echo "RabbitMQ did not become healthy."
+        podman logs --tail=150 firecrawl-rabbitmq || true
+        exit 1
+      fi
+
+      echo "Waiting for Postgres and Playwright..."
+      sleep 20
+
+      echo "Starting Firecrawl API..."
+      podman-compose --env-file /opt/firecrawl/.env up -d firecrawl-api
+
+      cat > /etc/systemd/system/firecrawl.service <<EOF
+      [Unit]
+      Description=Firecrawl self-hosted stack
+      Requires=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      WorkingDirectory=/opt/firecrawl
+      ExecStart=/usr/bin/podman-compose --env-file /opt/firecrawl/.env up -d
+      ExecStop=/usr/bin/podman-compose --env-file /opt/firecrawl/.env down
+      TimeoutStartSec=0
+
+      [Install]
+      WantedBy=multi-user.target
+      EOF
+
+      systemctl daemon-reload
+      systemctl enable firecrawl.service
+
+      echo "Waiting for Firecrawl raw API..."
+      FIRECRAWL_READY=0
+
+      for i in $(seq 1 180); do
+        if curl -fsS "http://127.0.0.1:${FIRECRAWL_INTERNAL_PORT}" >/dev/null 2>&1; then
+          FIRECRAWL_READY=1
+          break
+        fi
+
+        if [ "$((i % 12))" -eq 0 ]; then
+          podman ps -a || true
+          podman logs --tail=80 firecrawl-api 2>/dev/null || true
+        fi
+
+        echo "Waiting for Firecrawl API... attempt $i/180"
+        sleep 5
+      done
+
+      if [ "$FIRECRAWL_READY" != "1" ]; then
+        echo "Firecrawl API did not become reachable."
+        podman ps -a || true
+        podman logs --tail=150 firecrawl-api 2>/dev/null || true
+        podman logs --tail=150 firecrawl-playwright 2>/dev/null || true
+        podman logs --tail=150 firecrawl-redis 2>/dev/null || true
+        podman logs --tail=150 firecrawl-rabbitmq 2>/dev/null || true
+        podman logs --tail=150 firecrawl-postgres 2>/dev/null || true
+        exit 1
+      fi
+
+      echo "Creating protected Firecrawl bridge API..."
+      cd "$BRIDGE_DIR"
+
+      cat > package.json <<'EOF'
+      {
+        "scripts": {
+          "start": "node server.js"
+        },
+        "dependencies": {
+          "express": "^4.18.3"
+        }
+      }
+      EOF
+
+      npm install
+
+      cat > server.js <<'EOF'
+      const express = require("express");
+
+      const app = express();
+      app.use(express.json({ limit: "10mb" }));
+
+      const {
+        FIRECRAWL_URL = "http://127.0.0.1:3002",
+        FIRECRAWL_BRIDGE_API_KEY,
+        FIRECRAWL_PUBLIC_URL = "http://127.0.0.1:3003"
+      } = process.env;
+
+      function requireApiKey(req, res) {
+        if (req.headers["x-api-key"] !== FIRECRAWL_BRIDGE_API_KEY) {
+          res.status(401).json({
+            ok: false,
+            error: "Invalid API key"
+          });
+          return false;
+        }
+
+        return true;
+      }
+
+      async function proxyJson({ method, path, body }) {
+        const response = await fetch(`${FIRECRAWL_URL}${path}`, {
+          method,
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: body ? JSON.stringify(body) : undefined
+        });
+
+        const text = await response.text();
+
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (_) {
+          data = { raw: text };
+        }
+
+        return {
+          status: response.status,
+          data
+        };
+      }
+
+      app.get("/", (req, res) => {
+        res.json({
+          ok: true,
+          service: "Firecrawl Protected Bridge",
+          public_url: FIRECRAWL_PUBLIC_URL,
+          auth: "Send x-api-key header",
+          endpoints: {
+            scrape: "POST /api/scrape",
+            crawl: "POST /api/crawl",
+            crawl_status: "GET /api/crawl/:id",
+            map: "POST /api/map",
+            health: "GET /health"
+          }
+        });
+      });
+
+      app.get("/health", async (req, res) => {
+        try {
+          const response = await fetch(FIRECRAWL_URL);
+
+          res.status(response.ok ? 200 : 502).json({
+            ok: response.ok,
+            firecrawl_url: FIRECRAWL_URL,
+            status: response.status
+          });
+        } catch (error) {
+          res.status(502).json({
+            ok: false,
+            error: error.message
+          });
+        }
+      });
+
+      app.post("/api/scrape", async (req, res) => {
+        try {
+          if (!requireApiKey(req, res)) return;
+
+          const result = await proxyJson({
+            method: "POST",
+            path: "/v1/scrape",
+            body: req.body
+          });
+
+          res.status(result.status).json(result.data);
+        } catch (error) {
+          res.status(500).json({
+            ok: false,
+            error: error.message
+          });
+        }
+      });
+
+      app.post("/api/crawl", async (req, res) => {
+        try {
+          if (!requireApiKey(req, res)) return;
+
+          const result = await proxyJson({
+            method: "POST",
+            path: "/v1/crawl",
+            body: req.body
+          });
+
+          res.status(result.status).json(result.data);
+        } catch (error) {
+          res.status(500).json({
+            ok: false,
+            error: error.message
+          });
+        }
+      });
+
+      app.get("/api/crawl/:id", async (req, res) => {
+        try {
+          if (!requireApiKey(req, res)) return;
+
+          const result = await proxyJson({
+            method: "GET",
+            path: `/v1/crawl/${encodeURIComponent(req.params.id)}`
+          });
+
+          res.status(result.status).json(result.data);
+        } catch (error) {
+          res.status(500).json({
+            ok: false,
+            error: error.message
+          });
+        }
+      });
+
+      app.post("/api/map", async (req, res) => {
+        try {
+          if (!requireApiKey(req, res)) return;
+
+          const result = await proxyJson({
+            method: "POST",
+            path: "/v1/map",
+            body: req.body
+          });
+
+          res.status(result.status).json(result.data);
+        } catch (error) {
+          res.status(500).json({
+            ok: false,
+            error: error.message
+          });
+        }
+      });
+
+      const port = Number(process.env.FIRECRAWL_BRIDGE_PORT || 3003);
+
+      app.listen(port, "0.0.0.0", () => {
+        console.log(`Firecrawl bridge listening on port ${port}`);
+      });
+      EOF
+
+      cat > /etc/systemd/system/firecrawl-bridge.service <<EOF
+      [Unit]
+      Description=Firecrawl protected bridge API
+      Requires=network-online.target firecrawl.service
+      After=network-online.target firecrawl.service
+
+      [Service]
+      Type=simple
+      WorkingDirectory=/opt/firecrawl-bridge
+      Environment=FIRECRAWL_URL=http://127.0.0.1:${FIRECRAWL_INTERNAL_PORT}
+      Environment=FIRECRAWL_BRIDGE_PORT=${FIRECRAWL_BRIDGE_PORT}
+      Environment=FIRECRAWL_BRIDGE_API_KEY=${FIRECRAWL_BRIDGE_API_KEY}
+      Environment=FIRECRAWL_PUBLIC_URL=${FIRECRAWL_PUBLIC_URL}
+      ExecStart=/usr/bin/node /opt/firecrawl-bridge/server.js
+      Restart=always
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+      EOF
+
+      systemctl daemon-reload
+      systemctl enable firecrawl-bridge.service
+      systemctl restart firecrawl-bridge.service
+
+      echo "Waiting for Firecrawl bridge..."
+      BRIDGE_READY=0
+
+      for i in $(seq 1 60); do
+        if curl -fsS "http://127.0.0.1:${FIRECRAWL_BRIDGE_PORT}/health" >/dev/null 2>&1; then
+          BRIDGE_READY=1
+          break
+        fi
+
+        echo "Waiting for Firecrawl bridge... attempt $i/60"
+        sleep 3
+      done
+
+      if [ "$BRIDGE_READY" != "1" ]; then
+        echo "Firecrawl bridge did not become reachable."
+        journalctl -u firecrawl-bridge.service --no-pager -n 100 || true
+        exit 1
+      fi
+
+      echo "Running demo scrape test..."
+
+      SCRAPE_RESPONSE="$(curl -sS -X POST "http://127.0.0.1:${FIRECRAWL_BRIDGE_PORT}/api/scrape" \
+        -H "Content-Type: application/json" \
+        -H "x-api-key: ${FIRECRAWL_BRIDGE_API_KEY}" \
+        -d "{
+          \"url\": \"${DEMO_SCRAPE_URL}\",
+          \"formats\": [\"markdown\"],
+          \"timeout\": 60000
+        }" || true)"
+
+      echo "$SCRAPE_RESPONSE" > /root/firecrawl-demo-scrape-response.json
+
+      if echo "$SCRAPE_RESPONSE" | jq -e '.success == true' >/dev/null 2>&1; then
+        echo "Demo scrape succeeded."
+      else
+        echo "WARNING: Demo scrape did not return success=true."
+        echo "$SCRAPE_RESPONSE" | jq . || echo "$SCRAPE_RESPONSE"
+        echo "Continuing because Firecrawl and bridge are running."
+      fi
+
+      cat > /root/firecrawl-demo-output.txt <<EOF
+      Firecrawl demo is ready.
+
+      Public protected bridge:
+      ${FIRECRAWL_PUBLIC_URL}
+
+      Raw Firecrawl API:
+      http://127.0.0.1:${FIRECRAWL_INTERNAL_PORT}
+      This is intentionally bound to localhost only.
+
+      Bridge API key:
+      ${FIRECRAWL_BRIDGE_API_KEY}
+
+      Test health:
+      curl -sS "${FIRECRAWL_PUBLIC_URL}/health" | jq
+
+      Test scrape:
+      curl -sS -X POST "${FIRECRAWL_PUBLIC_URL}/api/scrape" \\
+        -H "Content-Type: application/json" \\
+        -H "x-api-key: ${FIRECRAWL_BRIDGE_API_KEY}" \\
+        -d '{
+          "url": "https://example.com",
+          "formats": ["markdown"],
+          "timeout": 60000
+        }' | jq
+
+      Test docs scrape:
+      curl -sS -X POST "${FIRECRAWL_PUBLIC_URL}/api/scrape" \\
+        -H "Content-Type: application/json" \\
+        -H "x-api-key: ${FIRECRAWL_BRIDGE_API_KEY}" \\
+        -d '{
+          "url": "https://docs.redu.cloud",
+          "formats": ["markdown"],
+          "timeout": 120000,
+          "onlyMainContent": true
+        }' | jq
+
+      Test crawl:
+      curl -sS -X POST "${FIRECRAWL_PUBLIC_URL}/api/crawl" \\
+        -H "Content-Type: application/json" \\
+        -H "x-api-key: ${FIRECRAWL_BRIDGE_API_KEY}" \\
+        -d '{
+          "url": "https://docs.redu.cloud",
+          "limit": 10,
+          "scrapeOptions": {
+            "formats": ["markdown"],
+            "timeout": 120000,
+            "onlyMainContent": true
+          }
+        }' | jq
+
+      Check crawl status:
+      curl -sS "${FIRECRAWL_PUBLIC_URL}/api/crawl/CRAWL_ID_HERE" \\
+        -H "x-api-key: ${FIRECRAWL_BRIDGE_API_KEY}" | jq
+
+      Test map:
+      curl -sS -X POST "${FIRECRAWL_PUBLIC_URL}/api/map" \\
+        -H "Content-Type: application/json" \\
+        -H "x-api-key: ${FIRECRAWL_BRIDGE_API_KEY}" \\
+        -d '{
+          "url": "https://docs.redu.cloud"
+        }' | jq
+
+      Files:
+      /root/firecrawl-demo.env
+      /root/firecrawl-demo-output.txt
+      /root/firecrawl-demo-scrape-response.json
+      /var/log/firecrawl-bootstrap.log
+
+      Services:
+      systemctl status firecrawl.service
+      systemctl status firecrawl-bridge.service
+
+      Containers:
+      podman ps -a
+      podman logs -f firecrawl-api
+      podman logs -f firecrawl-playwright
+      podman logs -f firecrawl-rabbitmq
+      podman logs -f firecrawl-postgres
+      EOF
+
+      chmod 600 /root/firecrawl-demo-output.txt
+
+      echo "========================================"
+      echo " Firecrawl demo ready"
+      echo " Public URL: ${FIRECRAWL_PUBLIC_URL}"
+      echo " Output: /root/firecrawl-demo-output.txt"
+      echo "========================================"
+
+runcmd:
+  - [ bash, -lc, "/usr/local/bin/firecrawl_bootstrap.sh" ]

@@ -1,0 +1,245 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+write_files:
+  - path: /root/zammad-ticket-demo.env
+    permissions: "0600"
+    content: |
+      TELEGRAM_BOT_TOKEN=PASTE_TELEGRAM_BOT_TOKEN_HERE
+      TELEGRAM_CHAT_ID=7598992526
+      TICKET_API_KEY=YOUR_API_KEY_HERE
+
+      ZAMMAD_ADMIN_EMAIL=admin@example.com
+      ZAMMAD_ADMIN_PASSWORD=ChangeMeStrong123
+      ZAMMAD_ADMIN_FIRSTNAME=John
+      ZAMMAD_ADMIN_LASTNAME=Doe
+
+  - path: /root/setup-zammad-ticket-demo.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+
+      source /root/zammad-ticket-demo.env
+      export DEBIAN_FRONTEND=noninteractive
+
+      apt-get update
+      apt-get install -y git curl podman podman-compose nodejs npm
+
+      cat > /etc/containers/registries.conf <<'EOF'
+      unqualified-search-registries = ["docker.io"]
+
+      [[registry]]
+      prefix = "docker.io"
+      location = "docker.io"
+      EOF
+
+      sysctl -w vm.max_map_count=262144
+      echo "vm.max_map_count=262144" > /etc/sysctl.d/99-zammad.conf
+
+      cd /opt
+      git clone https://github.com/zammad/zammad-docker-compose.git zammad
+      cd /opt/zammad
+
+      cp -n .env.dist .env || true
+      echo "NGINX_PORT=8080" >> .env
+      echo "ZAMMAD_HTTP_TYPE=http" >> .env
+      echo "ZAMMAD_FQDN=localhost" >> .env
+      echo "ELASTICSEARCH_ENABLED=false" >> .env
+
+      for i in $(seq 1 5); do
+        podman-compose pull && break
+        echo "Pull failed, retrying in 30s..."
+        sleep 30
+      done
+
+      podman-compose up -d
+
+      echo "Waiting for Zammad Rails..."
+      for i in $(seq 1 90); do
+        if podman exec zammad_zammad-railsserver_1 bash -lc 'cd /opt/zammad && bundle exec rails runner "puts :ready"' >/dev/null 2>&1; then
+          break
+        fi
+        sleep 10
+      done
+
+      cat > /root/create-zammad-admin.rb <<RUBY
+      admin_role = Role.find_by(name: 'Admin')
+      agent_role = Role.find_by(name: 'Agent')
+
+      group = Group.find_by(name: 'Users') || Group.create!(
+        name: 'Users',
+        active: true,
+        created_by_id: 1,
+        updated_by_id: 1
+      )
+
+      email = '${ZAMMAD_ADMIN_EMAIL}'
+
+      user = User.find_by(email: email) || User.new
+      user.firstname = '${ZAMMAD_ADMIN_FIRSTNAME}'
+      user.lastname = '${ZAMMAD_ADMIN_LASTNAME}'
+      user.email = email
+      user.login = email
+      user.password = '${ZAMMAD_ADMIN_PASSWORD}'
+      user.active = true
+      user.created_by_id = 1
+      user.updated_by_id = 1
+      user.role_ids = [admin_role.id, agent_role.id].compact
+      user.group_ids = [group.id]
+      user.save!
+
+      Setting.set('system_init_done', true)
+      Setting.set('fqdn', 'localhost')
+      Setting.set('http_type', 'http')
+      Setting.set('organization', 'Zammad Ticket Demo')
+
+      puts "Admin ready: #{email}"
+      RUBY
+
+      podman cp /root/create-zammad-admin.rb zammad_zammad-railsserver_1:/tmp/create-zammad-admin.rb
+      podman exec zammad_zammad-railsserver_1 bash -lc 'cd /opt/zammad && bundle exec rails runner /tmp/create-zammad-admin.rb'
+
+      mkdir -p /opt/zammad-ticket-bridge
+      cd /opt/zammad-ticket-bridge
+
+      cat > package.json <<'EOF'
+      {
+        "scripts": {
+          "start": "node server.js"
+        },
+        "dependencies": {
+          "express": "^4.18.3"
+        }
+      }
+      EOF
+
+      npm install
+
+      cat > server.js <<'EOF'
+      const express = require("express");
+
+      const app = express();
+      app.use(express.json());
+
+      const {
+        ZAMMAD_URL,
+        ZAMMAD_USER,
+        ZAMMAD_PASSWORD,
+        TELEGRAM_BOT_TOKEN,
+        TELEGRAM_CHAT_ID,
+        TICKET_API_KEY
+      } = process.env;
+
+      function basicAuth() {
+        return "Basic " + Buffer.from(`${ZAMMAD_USER}:${ZAMMAD_PASSWORD}`).toString("base64");
+      }
+
+      app.get("/", (req, res) => {
+        res.json({ ok: true, service: "Zammad Ticket Telegram Bridge" });
+      });
+
+      app.post("/api/ticket", async (req, res) => {
+        try {
+          if (req.headers["x-api-key"] !== TICKET_API_KEY) {
+            return res.status(401).json({ ok: false, error: "Invalid API key" });
+          }
+
+          const name = req.body.name || "Unknown";
+          const email = req.body.email || "customer@example.com";
+          const title = req.body.title || "New support ticket";
+          const message = req.body.message || "No message provided.";
+
+          const ticketResp = await fetch(`${ZAMMAD_URL}/api/v1/tickets`, {
+            method: "POST",
+            headers: {
+              "Authorization": basicAuth(),
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              title,
+              group: "Users",
+              customer_id: `guess:${email}`,
+              article: {
+                subject: title,
+                body: `From: ${name} <${email}>\n\n${message}`,
+                type: "web",
+                internal: false
+              }
+            })
+          });
+
+          const ticketBody = await ticketResp.text();
+
+          if (!ticketResp.ok) {
+            return res.status(500).json({
+              ok: false,
+              step: "zammad",
+              status: ticketResp.status,
+              error: ticketBody
+            });
+          }
+
+          const ticket = JSON.parse(ticketBody);
+
+          const telegramText =
+            `🎫 New Zammad ticket #${ticket.number || ticket.id}\n\n` +
+            `From: ${name} <${email}>\n` +
+            `Title: ${title}\n\n` +
+            `${message}`;
+
+          const tgResp = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: TELEGRAM_CHAT_ID,
+              text: telegramText
+            })
+          });
+
+          const tgJson = await tgResp.json();
+
+          res.json({
+            ok: true,
+            ticket_id: ticket.id,
+            ticket_number: ticket.number,
+            telegram_sent: tgJson.ok
+          });
+        } catch (err) {
+          res.status(500).json({ ok: false, error: err.message });
+        }
+      });
+
+      app.listen(3001, "0.0.0.0", () => {
+        console.log("Bridge running on port 3001");
+      });
+      EOF
+
+      cat > /etc/systemd/system/zammad-ticket-bridge.service <<EOF
+      [Unit]
+      Description=Zammad Ticket Telegram Bridge
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      WorkingDirectory=/opt/zammad-ticket-bridge
+      Environment=ZAMMAD_URL=http://127.0.0.1:8080
+      Environment=ZAMMAD_USER=${ZAMMAD_ADMIN_EMAIL}
+      Environment=ZAMMAD_PASSWORD=${ZAMMAD_ADMIN_PASSWORD}
+      Environment=TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      Environment=TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      Environment=TICKET_API_KEY=${TICKET_API_KEY}
+      ExecStart=/usr/bin/node /opt/zammad-ticket-bridge/server.js
+      Restart=always
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+      EOF
+
+      systemctl daemon-reload
+      systemctl enable --now zammad-ticket-bridge
+
+runcmd:
+  - /root/setup-zammad-ticket-demo.sh

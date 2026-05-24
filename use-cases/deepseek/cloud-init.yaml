@@ -1,0 +1,486 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+  - podman
+  - curl
+  - jq
+  - openssl
+  - nodejs
+  - npm
+  - psmisc
+
+write_files:
+  - path: /root/ollama-demo.env
+    permissions: "0600"
+    content: |
+      # API key for the bridge API on port 3001.
+      # Leave AUTO_GENERATE for cloud-init.
+      AI_API_KEY=AUTO_GENERATE
+
+      # Main chat model
+      OLLAMA_MODEL=deepseek-r1:1.5b
+
+      # Embedding model for Qdrant semantic memory
+      # nomic-embed-text produces 768-dimensional vectors.
+      OLLAMA_EMBED_MODEL=nomic-embed-text
+
+      # Ports
+      OLLAMA_PORT=11434
+      BRIDGE_PORT=3001
+
+  - path: /etc/containers/registries.conf
+    permissions: "0644"
+    content: |
+      unqualified-search-registries = ["docker.io"]
+
+      [[registry]]
+      prefix = "docker.io"
+      location = "docker.io"
+
+  - path: /usr/local/bin/ollama_bootstrap.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      LOG_FILE="/var/log/ollama-bootstrap.log"
+      exec > >(tee -a "$LOG_FILE") 2>&1
+
+      echo "========================================"
+      echo " redu.cloud Ollama + DeepSeek bootstrap"
+      echo " Started: $(date -Is)"
+      echo "========================================"
+
+      source /root/ollama-demo.env
+
+      APP_DIR="/opt/ollama"
+      BRIDGE_DIR="/opt/ollama-bridge"
+
+      mkdir -p "$APP_DIR"
+      mkdir -p "$BRIDGE_DIR"
+
+      PUBLIC_IP="$(curl -fsS --max-time 10 https://api.ipify.org || true)"
+      if [ -z "$PUBLIC_IP" ]; then
+        PUBLIC_IP="$(hostname -I | awk '{print $1}')"
+      fi
+
+      if [ "${AI_API_KEY:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        AI_API_KEY="$(openssl rand -hex 32)"
+      fi
+
+      echo "Writing normalized /root/ollama-demo.env..."
+
+      cat > /root/ollama-demo.env <<EOF
+      AI_API_KEY=${AI_API_KEY}
+      OLLAMA_MODEL=${OLLAMA_MODEL}
+      OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL}
+      OLLAMA_PORT=${OLLAMA_PORT}
+      BRIDGE_PORT=${BRIDGE_PORT}
+      EOF
+
+      chmod 600 /root/ollama-demo.env
+      source /root/ollama-demo.env
+
+      echo "[1/7] Preparing Ollama container..."
+
+      podman rm -f ollama 2>/dev/null || true
+
+      echo "Freeing ports if needed..."
+      fuser -k "${OLLAMA_PORT}/tcp" 2>/dev/null || true
+      fuser -k "${BRIDGE_PORT}/tcp" 2>/dev/null || true
+
+      podman volume create ollama_data || true
+
+      echo "[2/7] Starting Ollama container..."
+
+      podman run -d \
+        --name ollama \
+        --restart always \
+        -p "${OLLAMA_PORT}:11434" \
+        -e OLLAMA_HOST=0.0.0.0:11434 \
+        -v ollama_data:/root/.ollama \
+        docker.io/ollama/ollama:latest
+
+      echo "Creating systemd service for Ollama..."
+
+      cat > /etc/systemd/system/ollama-container.service <<EOF
+      [Unit]
+      Description=Ollama container
+      Requires=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/bin/podman start ollama
+      ExecStop=/usr/bin/podman stop ollama
+      TimeoutStartSec=0
+
+      [Install]
+      WantedBy=multi-user.target
+      EOF
+
+      systemctl daemon-reload
+      systemctl enable ollama-container.service
+
+      echo "[3/7] Waiting for Ollama..."
+
+      OLLAMA_READY=0
+
+      for i in $(seq 1 90); do
+        if curl -fsS "http://127.0.0.1:${OLLAMA_PORT}/api/tags" >/dev/null 2>&1; then
+          OLLAMA_READY=1
+          echo "Ollama is reachable."
+          break
+        fi
+
+        echo "Waiting for Ollama... attempt $i/90"
+        sleep 5
+      done
+
+      if [ "$OLLAMA_READY" != "1" ]; then
+        echo "Ollama did not become reachable."
+        podman ps -a || true
+        podman logs --tail=150 ollama || true
+        exit 1
+      fi
+
+      echo "[4/7] Pulling chat model: ${OLLAMA_MODEL}"
+
+      for i in $(seq 1 5); do
+        if podman exec ollama ollama pull "${OLLAMA_MODEL}"; then
+          break
+        fi
+
+        echo "Chat model pull failed, retrying in 30s..."
+        sleep 30
+      done
+
+      echo "[5/7] Pulling embedding model: ${OLLAMA_EMBED_MODEL}"
+
+      for i in $(seq 1 5); do
+        if podman exec ollama ollama pull "${OLLAMA_EMBED_MODEL}"; then
+          break
+        fi
+
+        echo "Embedding model pull failed, retrying in 30s..."
+        sleep 30
+      done
+
+      echo "Testing embedding model..."
+
+      EMBED_TEST_RESPONSE="$(curl -sS -X POST "http://127.0.0.1:${OLLAMA_PORT}/api/embeddings" \
+        -H "Content-Type: application/json" \
+        -d "{
+          \"model\": \"${OLLAMA_EMBED_MODEL}\",
+          \"prompt\": \"startup pricing concern\"
+        }")"
+
+      echo "$EMBED_TEST_RESPONSE" > /root/ollama-embedding-test-response.json
+
+      EMBED_SIZE="$(echo "$EMBED_TEST_RESPONSE" | jq '.embedding | length' 2>/dev/null || echo 0)"
+
+      if [ "$EMBED_SIZE" != "768" ]; then
+        echo "WARNING: Expected embedding size 768, got ${EMBED_SIZE}."
+        echo "$EMBED_TEST_RESPONSE" | jq . || echo "$EMBED_TEST_RESPONSE"
+      else
+        echo "Embedding model works. Vector size: ${EMBED_SIZE}"
+      fi
+
+      echo "[6/7] Creating API bridge..."
+
+      cd "$BRIDGE_DIR"
+
+      cat > package.json <<'EOF'
+      {
+        "scripts": {
+          "start": "node server.js"
+        },
+        "dependencies": {
+          "express": "^4.18.3"
+        }
+      }
+      EOF
+
+      npm install
+
+      cat > server.js <<'EOF'
+      const express = require("express");
+
+      const app = express();
+      app.use(express.json({ limit: "5mb" }));
+
+      const {
+        AI_API_KEY,
+        OLLAMA_URL,
+        OLLAMA_MODEL,
+        OLLAMA_EMBED_MODEL
+      } = process.env;
+
+      function requireApiKey(req, res) {
+        if (req.headers["x-api-key"] !== AI_API_KEY) {
+          res.status(401).json({
+            ok: false,
+            error: "Invalid API key"
+          });
+          return false;
+        }
+
+        return true;
+      }
+
+      app.get("/", (req, res) => {
+        res.json({
+          ok: true,
+          service: "Ollama DeepSeek + Embeddings API Bridge",
+          endpoints: {
+            generate: "POST /api/generate",
+            embeddings: "POST /api/embeddings"
+          },
+          chat_model: OLLAMA_MODEL,
+          embedding_model: OLLAMA_EMBED_MODEL,
+          embedding_vector_size: 768
+        });
+      });
+
+      app.post("/api/generate", async (req, res) => {
+        try {
+          if (!requireApiKey(req, res)) return;
+
+          const prompt = req.body.prompt;
+          const system = req.body.system || "You are a helpful assistant. Be concise and practical.";
+
+          if (!prompt) {
+            return res.status(400).json({
+              ok: false,
+              error: "prompt is required"
+            });
+          }
+
+          const ollamaResp = await fetch(`${OLLAMA_URL}/api/chat`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              model: req.body.model || OLLAMA_MODEL,
+              stream: false,
+              messages: [
+                {
+                  role: "system",
+                  content: system
+                },
+                {
+                  role: "user",
+                  content: prompt
+                }
+              ]
+            })
+          });
+
+          const body = await ollamaResp.text();
+
+          if (!ollamaResp.ok) {
+            return res.status(500).json({
+              ok: false,
+              step: "ollama",
+              status: ollamaResp.status,
+              error: body
+            });
+          }
+
+          const data = JSON.parse(body);
+
+          res.json({
+            ok: true,
+            model: req.body.model || OLLAMA_MODEL,
+            response: data.message?.content || data.response || ""
+          });
+        } catch (err) {
+          res.status(500).json({
+            ok: false,
+            error: err.message
+          });
+        }
+      });
+
+      app.post("/api/embeddings", async (req, res) => {
+        try {
+          if (!requireApiKey(req, res)) return;
+
+          const text = req.body.text || req.body.prompt || req.body.query || "";
+
+          if (!text) {
+            return res.status(400).json({
+              ok: false,
+              error: "text, prompt, or query is required"
+            });
+          }
+
+          const model = req.body.model || OLLAMA_EMBED_MODEL;
+
+          const ollamaResp = await fetch(`${OLLAMA_URL}/api/embeddings`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              model,
+              prompt: text
+            })
+          });
+
+          const body = await ollamaResp.text();
+
+          if (!ollamaResp.ok) {
+            return res.status(500).json({
+              ok: false,
+              step: "ollama_embeddings",
+              status: ollamaResp.status,
+              error: body
+            });
+          }
+
+          const data = JSON.parse(body);
+
+          res.json({
+            ok: true,
+            model,
+            text,
+            vector_size: Array.isArray(data.embedding) ? data.embedding.length : 0,
+            embedding: data.embedding
+          });
+        } catch (err) {
+          res.status(500).json({
+            ok: false,
+            error: err.message
+          });
+        }
+      });
+
+      app.listen(Number(process.env.BRIDGE_PORT || 3001), "0.0.0.0", () => {
+        console.log(`Ollama bridge running on port ${process.env.BRIDGE_PORT || 3001}`);
+      });
+      EOF
+
+      cat > /etc/systemd/system/ollama-bridge.service <<EOF
+      [Unit]
+      Description=Ollama DeepSeek + Embeddings API Bridge
+      After=network-online.target ollama-container.service
+      Wants=network-online.target
+
+      [Service]
+      WorkingDirectory=/opt/ollama-bridge
+      Environment=AI_API_KEY=${AI_API_KEY}
+      Environment=OLLAMA_URL=http://127.0.0.1:${OLLAMA_PORT}
+      Environment=OLLAMA_MODEL=${OLLAMA_MODEL}
+      Environment=OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL}
+      Environment=BRIDGE_PORT=${BRIDGE_PORT}
+      ExecStart=/usr/bin/node /opt/ollama-bridge/server.js
+      Restart=always
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+      EOF
+
+      systemctl daemon-reload
+      systemctl enable --now ollama-bridge
+
+      echo "Waiting for bridge..."
+
+      BRIDGE_READY=0
+
+      for i in $(seq 1 60); do
+        if curl -fsS "http://127.0.0.1:${BRIDGE_PORT}" >/dev/null 2>&1; then
+          BRIDGE_READY=1
+          echo "Bridge is reachable."
+          break
+        fi
+
+        echo "Waiting for bridge... attempt $i/60"
+        sleep 3
+      done
+
+      if [ "$BRIDGE_READY" != "1" ]; then
+        echo "Bridge did not become reachable."
+        systemctl status ollama-bridge --no-pager || true
+        journalctl -u ollama-bridge --no-pager -n 100 || true
+        exit 1
+      fi
+
+      echo "[7/7] Writing output file..."
+
+      cat > /root/ollama-demo-output.txt <<EOF
+      redu.cloud Ollama + DeepSeek + Embeddings demo is ready.
+
+      Ollama direct API:
+      http://${PUBLIC_IP}:${OLLAMA_PORT}
+
+      Ollama bridge API:
+      http://${PUBLIC_IP}:${BRIDGE_PORT}
+
+      Bridge API key:
+      ${AI_API_KEY}
+
+      Chat model:
+      ${OLLAMA_MODEL}
+
+      Embedding model:
+      ${OLLAMA_EMBED_MODEL}
+
+      Embedding vector size:
+      768
+
+      Test chat through bridge:
+
+      curl -sS -X POST "http://${PUBLIC_IP}:${BRIDGE_PORT}/api/generate" \\
+        -H "Content-Type: application/json" \\
+        -H "X-API-Key: ${AI_API_KEY}" \\
+        -d '{
+          "prompt": "Explain Qdrant in one sentence."
+        }' | jq
+
+      Test embeddings through bridge:
+
+      curl -sS -X POST "http://${PUBLIC_IP}:${BRIDGE_PORT}/api/embeddings" \\
+        -H "Content-Type: application/json" \\
+        -H "X-API-Key: ${AI_API_KEY}" \\
+        -d '{
+          "text": "startup pricing concern"
+        }' | jq '.vector_size'
+
+      Test Ollama embeddings directly:
+
+      curl -sS -X POST "http://${PUBLIC_IP}:${OLLAMA_PORT}/api/embeddings" \\
+        -H "Content-Type: application/json" \\
+        -d '{
+          "model": "${OLLAMA_EMBED_MODEL}",
+          "prompt": "startup pricing concern"
+        }' | jq '.embedding | length'
+
+      For Qdrant VM, use:
+
+      EMBEDDINGS_ENABLED=true
+      OLLAMA_URL=http://${PUBLIC_IP}:${OLLAMA_PORT}
+      OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL}
+      QDRANT_VECTOR_SIZE=768
+
+      Logs:
+      /var/log/ollama-bootstrap.log
+
+      Normalized config:
+      /root/ollama-demo.env
+      EOF
+
+      chmod 600 /root/ollama-demo-output.txt
+
+      echo "========================================"
+      echo " Ollama demo ready"
+      echo "========================================"
+      cat /root/ollama-demo-output.txt
+
+runcmd:
+  - [ bash, -lc, "/usr/local/bin/ollama_bootstrap.sh" ]

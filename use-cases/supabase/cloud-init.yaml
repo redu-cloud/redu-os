@@ -1,0 +1,738 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+  - podman
+  - podman-compose
+  - uidmap
+  - git
+  - curl
+  - jq
+  - openssl
+  - python3
+  - psmisc
+  - rsync
+
+write_files:
+  - path: /root/supabase-demo.env
+    permissions: "0600"
+    owner: root:root
+    content: |
+      # redu.cloud Supabase AI OS template
+
+      # Public API URL.
+      # Leave empty to auto-detect public IP and use http://IP:8000
+      # Or set something like:
+      # SUPABASE_PUBLIC_URL="https://supabase-demo.redu.cloud"
+      SUPABASE_PUBLIC_URL=""
+
+      # Studio URL.
+      # Leave empty to auto-detect public IP and use http://IP:3000
+      SUPABASE_STUDIO_URL=""
+
+      # Exposed ports
+      SUPABASE_KONG_HTTP_PORT=8000
+      SUPABASE_KONG_HTTPS_PORT=8443
+      SUPABASE_STUDIO_PORT=3000
+      SUPABASE_DB_PORT=5432
+      SUPABASE_POOLER_PORT=6543
+
+      # Supabase Studio login
+      DASHBOARD_USERNAME=admin
+      DASHBOARD_PASSWORD=ChangeMeStrong123!
+
+      # Database
+      POSTGRES_DB=postgres
+      POSTGRES_PASSWORD=AUTO_GENERATE
+
+      # Secrets. Leave AUTO_GENERATE.
+      JWT_SECRET=AUTO_GENERATE
+      ANON_KEY=AUTO_GENERATE
+      SERVICE_ROLE_KEY=AUTO_GENERATE
+      SECRET_KEY_BASE=AUTO_GENERATE
+      VAULT_ENC_KEY=AUTO_GENERATE
+
+      # Project display in Studio
+      STUDIO_DEFAULT_ORGANIZATION="redu.cloud"
+      STUDIO_DEFAULT_PROJECT="AI OS Startup Backend"
+
+      # Demo schema
+      CREATE_AI_OS_DEMO_TABLES=true
+
+      # Set true only if reusing a broken test VM and you want to wipe/recreate containers.
+      # This does not remove database volume data unless you manually delete volumes.
+      SUPABASE_RESET_CONTAINERS_ON_BOOT=true
+
+  - path: /usr/local/bin/supabase_bootstrap.sh
+    permissions: "0755"
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      LOG_FILE="/var/log/supabase-bootstrap.log"
+      exec > >(tee -a "$LOG_FILE") 2>&1
+
+      echo "========================================"
+      echo " redu.cloud Supabase AI OS bootstrap"
+      echo " Started: $(date -Is)"
+      echo "========================================"
+
+      source /root/supabase-demo.env
+
+      APP_DIR="/opt/supabase"
+      SRC_DIR="/opt/supabase-src"
+      DOCKER_DIR="${SRC_DIR}/docker"
+
+      mkdir -p "$APP_DIR"
+
+      echo "Enabling Podman socket..."
+      systemctl enable --now podman.socket
+
+      echo "Creating Docker-compatible socket symlink..."
+      mkdir -p /var/run
+      ln -sf /run/podman/podman.sock /var/run/docker.sock
+
+      echo "Writing Podman registry config..."
+      cat > /etc/containers/registries.conf <<'EOF_REG'
+      unqualified-search-registries = ["docker.io"]
+
+      [[registry]]
+      prefix = "docker.io"
+      location = "docker.io"
+      EOF_REG
+
+      if [ -z "${SUPABASE_PUBLIC_URL:-}" ] || [ -z "${SUPABASE_STUDIO_URL:-}" ]; then
+        PUBLIC_IP="$(curl -fsS --max-time 10 https://api.ipify.org || true)"
+        if [ -z "$PUBLIC_IP" ]; then
+          PUBLIC_IP="$(hostname -I | awk '{print $1}')"
+        fi
+      fi
+
+      if [ -z "${SUPABASE_PUBLIC_URL:-}" ]; then
+        SUPABASE_PUBLIC_URL="http://${PUBLIC_IP}:${SUPABASE_KONG_HTTP_PORT}"
+      fi
+
+      if [ -z "${SUPABASE_STUDIO_URL:-}" ]; then
+        SUPABASE_STUDIO_URL="http://${PUBLIC_IP}:${SUPABASE_STUDIO_PORT}"
+      fi
+
+      if [[ "$SUPABASE_PUBLIC_URL" != http://* && "$SUPABASE_PUBLIC_URL" != https://* ]]; then
+        SUPABASE_PUBLIC_URL="https://${SUPABASE_PUBLIC_URL}"
+      fi
+
+      if [[ "$SUPABASE_STUDIO_URL" != http://* && "$SUPABASE_STUDIO_URL" != https://* ]]; then
+        SUPABASE_STUDIO_URL="https://${SUPABASE_STUDIO_URL}"
+      fi
+
+      generate_hex() {
+        openssl rand -hex "$1"
+      }
+
+      generate_jwt() {
+        local role="$1"
+        local secret="$2"
+
+        python3 - "$role" "$secret" <<'PY'
+      import base64
+      import hashlib
+      import hmac
+      import json
+      import sys
+      import time
+
+      role = sys.argv[1]
+      secret = sys.argv[2].encode()
+
+      def b64url(data):
+          return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+      header = {
+          "alg": "HS256",
+          "typ": "JWT"
+      }
+
+      payload = {
+          "role": role,
+          "iss": "supabase",
+          "iat": int(time.time()),
+          "exp": 2524608000
+      }
+
+      signing_input = (
+          b64url(json.dumps(header, separators=(",", ":")).encode())
+          + "."
+          + b64url(json.dumps(payload, separators=(",", ":")).encode())
+      )
+
+      signature = hmac.new(
+          secret,
+          signing_input.encode(),
+          hashlib.sha256
+      ).digest()
+
+      print(signing_input + "." + b64url(signature))
+      PY
+      }
+
+      if [ "${POSTGRES_PASSWORD:-AUTO_GENERATE}" = "AUTO_GENERATE" ] || [ -z "${POSTGRES_PASSWORD:-}" ]; then
+        POSTGRES_PASSWORD="$(generate_hex 24)"
+      fi
+
+      # IMPORTANT:
+      # Use plain hex, not base64. This avoids .env/podman-compose parsing issues.
+      if [ "${JWT_SECRET:-AUTO_GENERATE}" = "AUTO_GENERATE" ] || [ -z "${JWT_SECRET:-}" ]; then
+        JWT_SECRET="$(generate_hex 64)"
+      fi
+
+      if [ "${ANON_KEY:-AUTO_GENERATE}" = "AUTO_GENERATE" ] || [ -z "${ANON_KEY:-}" ]; then
+        ANON_KEY="$(generate_jwt anon "$JWT_SECRET")"
+      fi
+
+      if [ "${SERVICE_ROLE_KEY:-AUTO_GENERATE}" = "AUTO_GENERATE" ] || [ -z "${SERVICE_ROLE_KEY:-}" ]; then
+        SERVICE_ROLE_KEY="$(generate_jwt service_role "$JWT_SECRET")"
+      fi
+
+      if [ "${SECRET_KEY_BASE:-AUTO_GENERATE}" = "AUTO_GENERATE" ] || [ -z "${SECRET_KEY_BASE:-}" ]; then
+        SECRET_KEY_BASE="$(generate_hex 64)"
+      fi
+
+      if [ "${VAULT_ENC_KEY:-AUTO_GENERATE}" = "AUTO_GENERATE" ] || [ -z "${VAULT_ENC_KEY:-}" ]; then
+        VAULT_ENC_KEY="$(generate_hex 16)"
+      fi
+
+      echo "Writing normalized /root/supabase-demo.env..."
+      cat > /root/supabase-demo.env <<EOF_ENV
+      SUPABASE_PUBLIC_URL="${SUPABASE_PUBLIC_URL}"
+      SUPABASE_STUDIO_URL="${SUPABASE_STUDIO_URL}"
+
+      SUPABASE_KONG_HTTP_PORT=${SUPABASE_KONG_HTTP_PORT}
+      SUPABASE_KONG_HTTPS_PORT=${SUPABASE_KONG_HTTPS_PORT}
+      SUPABASE_STUDIO_PORT=${SUPABASE_STUDIO_PORT}
+      SUPABASE_DB_PORT=${SUPABASE_DB_PORT}
+      SUPABASE_POOLER_PORT=${SUPABASE_POOLER_PORT}
+
+      DASHBOARD_USERNAME=${DASHBOARD_USERNAME}
+      DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD}
+
+      POSTGRES_DB=${POSTGRES_DB}
+      POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+
+      JWT_SECRET=${JWT_SECRET}
+      PGRST_JWT_SECRET=${JWT_SECRET}
+      ANON_KEY=${ANON_KEY}
+      SERVICE_ROLE_KEY=${SERVICE_ROLE_KEY}
+      SECRET_KEY_BASE=${SECRET_KEY_BASE}
+      VAULT_ENC_KEY=${VAULT_ENC_KEY}
+
+      STUDIO_DEFAULT_ORGANIZATION="${STUDIO_DEFAULT_ORGANIZATION}"
+      STUDIO_DEFAULT_PROJECT="${STUDIO_DEFAULT_PROJECT}"
+
+      CREATE_AI_OS_DEMO_TABLES=${CREATE_AI_OS_DEMO_TABLES}
+      SUPABASE_RESET_CONTAINERS_ON_BOOT=${SUPABASE_RESET_CONTAINERS_ON_BOOT}
+      EOF_ENV
+      chmod 600 /root/supabase-demo.env
+
+      echo "Fetching official Supabase self-hosting docker files..."
+      if [ ! -d "$SRC_DIR/.git" ]; then
+        rm -rf "$SRC_DIR"
+        git clone --depth 1 https://github.com/supabase/supabase.git "$SRC_DIR"
+      else
+        cd "$SRC_DIR"
+        git fetch --depth 1 origin master || true
+        git reset --hard origin/master || true
+      fi
+
+      if [ ! -d "$DOCKER_DIR" ]; then
+        echo "Could not find Supabase docker directory at $DOCKER_DIR"
+        exit 1
+      fi
+
+      echo "Copying Supabase docker directory to ${APP_DIR}..."
+      rsync -a --delete "$DOCKER_DIR"/ "$APP_DIR"/
+
+      cd "$APP_DIR"
+
+      if [ ! -f ".env.example" ]; then
+        echo "Missing .env.example in Supabase docker folder."
+        exit 1
+      fi
+
+      cp .env.example .env
+
+      set_env() {
+        local key="$1"
+        local value="$2"
+
+        python3 - "$APP_DIR/.env" "$key" "$value" <<'PY'
+      from pathlib import Path
+      import sys
+
+      path = Path(sys.argv[1])
+      key = sys.argv[2]
+      value = sys.argv[3]
+
+      lines = path.read_text().splitlines()
+      out = []
+      changed = False
+
+      for line in lines:
+          if line.startswith(key + "=") or line.startswith("#" + key + "="):
+              out.append(f"{key}={value}")
+              changed = True
+          else:
+              out.append(line)
+
+      if not changed:
+          out.append(f"{key}={value}")
+
+      path.write_text("\n".join(out) + "\n")
+      PY
+      }
+
+      echo "Patching Supabase .env..."
+
+      set_env POSTGRES_PASSWORD "$POSTGRES_PASSWORD"
+      set_env POSTGRES_DB "$POSTGRES_DB"
+
+      set_env JWT_SECRET "$JWT_SECRET"
+      set_env PGRST_JWT_SECRET "$JWT_SECRET"
+      set_env ANON_KEY "$ANON_KEY"
+      set_env SERVICE_ROLE_KEY "$SERVICE_ROLE_KEY"
+
+      set_env DASHBOARD_USERNAME "$DASHBOARD_USERNAME"
+      set_env DASHBOARD_PASSWORD "$DASHBOARD_PASSWORD"
+
+      set_env SECRET_KEY_BASE "$SECRET_KEY_BASE"
+      set_env VAULT_ENC_KEY "$VAULT_ENC_KEY"
+
+      set_env SITE_URL "$SUPABASE_PUBLIC_URL"
+      set_env API_EXTERNAL_URL "$SUPABASE_PUBLIC_URL"
+      set_env SUPABASE_PUBLIC_URL "$SUPABASE_PUBLIC_URL"
+
+      set_env STUDIO_DEFAULT_ORGANIZATION "$STUDIO_DEFAULT_ORGANIZATION"
+      set_env STUDIO_DEFAULT_PROJECT "$STUDIO_DEFAULT_PROJECT"
+
+      set_env KONG_HTTP_PORT "$SUPABASE_KONG_HTTP_PORT"
+      set_env KONG_HTTPS_PORT "$SUPABASE_KONG_HTTPS_PORT"
+      set_env STUDIO_PORT "$SUPABASE_STUDIO_PORT"
+      set_env POSTGRES_PORT "$SUPABASE_DB_PORT"
+      set_env POOLER_PROXY_PORT_TRANSACTION "$SUPABASE_POOLER_PORT"
+
+      set_env ENABLE_EMAIL_SIGNUP "true"
+      set_env ENABLE_ANONYMOUS_USERS "false"
+      set_env DISABLE_SIGNUP "false"
+      set_env ENABLE_EMAIL_AUTOCONFIRM "true"
+
+      set_env SMTP_ADMIN_EMAIL "admin@example.com"
+      set_env SMTP_HOST ""
+      set_env SMTP_PORT "587"
+      set_env SMTP_USER ""
+      set_env SMTP_PASS ""
+      set_env SMTP_SENDER_NAME "redu.cloud Supabase"
+
+      set_env LOGFLARE_PUBLIC_ACCESS_TOKEN "$(generate_hex 24)"
+      set_env LOGFLARE_PRIVATE_ACCESS_TOKEN "$(generate_hex 24)"
+      set_env POOLER_TENANT_ID "redu-cloud"
+
+      chmod 600 .env
+
+      echo "Patching docker-compose.yml for Podman..."
+
+      cp docker-compose.yml docker-compose.yml.bak.$(date +%s)
+
+      # Fully qualify common image names for Podman.
+      sed -i \
+        -e 's#image: supabase/#image: docker.io/supabase/#g' \
+        -e 's#image: postgrest/#image: docker.io/postgrest/#g' \
+        -e 's#image: kong:#image: docker.io/kong/kong:#g' \
+        -e 's#image: redis:#image: docker.io/library/redis:#g' \
+        -e 's#image: postgres:#image: docker.io/library/postgres:#g' \
+        -e 's#image: timberio/#image: docker.io/timberio/#g' \
+        -e 's#image: darthsim/#image: docker.io/darthsim/#g' \
+        docker-compose.yml
+
+      # IMPORTANT:
+      # podman-compose does not safely handle nested fallback:
+      # ${JWT_JWKS:-${JWT_SECRET}}
+      # This makes PostgREST receive a bad/empty JWT secret.
+      python3 - <<'PY'
+      from pathlib import Path
+
+      p = Path("/opt/supabase/docker-compose.yml")
+      text = p.read_text()
+
+      text = text.replace(
+          "PGRST_JWT_SECRET: ${JWT_JWKS:-${JWT_SECRET}}",
+          "PGRST_JWT_SECRET: ${JWT_SECRET}"
+      )
+
+      p.write_text(text)
+      PY
+
+      echo "Checking JWT patch:"
+      grep -nA6 -B4 "PGRST_JWT_SECRET" docker-compose.yml || true
+
+      echo "Freeing Supabase ports..."
+      fuser -k "${SUPABASE_KONG_HTTP_PORT}/tcp" 2>/dev/null || true
+      fuser -k "${SUPABASE_KONG_HTTPS_PORT}/tcp" 2>/dev/null || true
+      fuser -k "${SUPABASE_STUDIO_PORT}/tcp" 2>/dev/null || true
+      fuser -k "${SUPABASE_DB_PORT}/tcp" 2>/dev/null || true
+      fuser -k "${SUPABASE_POOLER_PORT}/tcp" 2>/dev/null || true
+
+      echo "Cleaning old Supabase containers if present..."
+      systemctl stop supabase 2>/dev/null || true
+
+      podman ps -a --format "{{.Names}}" | grep -E "supabase|realtime-dev" | xargs -r podman kill || true
+
+      for name in \
+        supabase-edge-functions \
+        supabase-storage \
+        supabase-kong \
+        supabase-vector \
+        supabase-studio \
+        supabase-analytics \
+        supabase-meta \
+        realtime-dev.supabase-realtime \
+        supabase-rest \
+        supabase-auth \
+        supabase-pooler \
+        supabase-imgproxy \
+        supabase-db
+      do
+        podman rm -f "$name" 2>/dev/null || true
+      done
+
+      podman ps -a --format "{{.Names}}" | grep -E "supabase|realtime-dev" | xargs -r podman rm -f || true
+
+      echo "Pulling Supabase images..."
+      for i in $(seq 1 5); do
+        podman-compose --env-file .env pull && break
+        echo "Pull failed, retrying in 30s..."
+        sleep 30
+      done
+
+      echo "Starting Supabase..."
+      for i in $(seq 1 5); do
+        podman-compose --env-file .env up -d && break
+        echo "Start failed, retrying in 30s..."
+        sleep 30
+      done
+
+      echo "Creating systemd service..."
+      cat > /etc/systemd/system/supabase.service <<EOF_SERVICE
+      [Unit]
+      Description=Supabase self-hosted stack on Podman
+      Requires=network-online.target podman.socket
+      After=network-online.target podman.socket
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      WorkingDirectory=${APP_DIR}
+      ExecStart=/usr/bin/podman-compose --env-file .env up -d
+      ExecStop=/usr/bin/podman-compose --env-file .env down
+      TimeoutStartSec=0
+
+      [Install]
+      WantedBy=multi-user.target
+      EOF_SERVICE
+
+      systemctl daemon-reload
+      systemctl enable supabase.service
+
+      echo "Waiting for Supabase REST API..."
+      for i in $(seq 1 180); do
+        if curl -fsS "http://127.0.0.1:${SUPABASE_KONG_HTTP_PORT}/rest/v1/" \
+          -H "apikey: ${ANON_KEY}" >/dev/null 2>&1; then
+          echo "Supabase REST API is responding."
+          break
+        fi
+
+        echo "Waiting for Supabase REST API... attempt $i/180"
+        sleep 5
+      done
+
+      echo "Writing AI OS demo SQL..."
+      cat > /root/supabase-aios-demo.sql <<'EOF_SQL'
+      create extension if not exists "uuid-ossp";
+
+      create table if not exists public.startup_events (
+        id uuid primary key default uuid_generate_v4(),
+        source text not null default 'api',
+        event_type text not null,
+        user_email text,
+        user_name text,
+        message text,
+        metadata jsonb not null default '{}'::jsonb,
+        created_at timestamptz not null default now()
+      );
+
+      create table if not exists public.ai_insights (
+        id uuid primary key default uuid_generate_v4(),
+        startup_event_id uuid references public.startup_events(id) on delete cascade,
+        category text not null,
+        priority text not null default 'Medium',
+        sentiment text not null default 'Neutral',
+        summary text,
+        recommended_action text,
+        ai_model text,
+        created_at timestamptz not null default now()
+      );
+
+      alter table public.startup_events enable row level security;
+      alter table public.ai_insights enable row level security;
+
+      drop policy if exists "Service role can manage startup events" on public.startup_events;
+      create policy "Service role can manage startup events"
+      on public.startup_events
+      for all
+      using (auth.role() = 'service_role')
+      with check (auth.role() = 'service_role');
+
+      drop policy if exists "Service role can manage AI insights" on public.ai_insights;
+      create policy "Service role can manage AI insights"
+      on public.ai_insights
+      for all
+      using (auth.role() = 'service_role')
+      with check (auth.role() = 'service_role');
+
+      insert into public.startup_events (
+        source,
+        event_type,
+        user_email,
+        user_name,
+        message,
+        metadata
+      )
+      values (
+        'redu-cloud-template',
+        'demo_feedback',
+        'founder@example.com',
+        'Demo Founder',
+        'A beta user wants a simpler onboarding flow and asked if the product can integrate with their support system.',
+        '{"channel":"demo","template":"supabase-ai-os"}'::jsonb
+      );
+      EOF_SQL
+
+      cat > /root/supabase-create-aios-demo-tables.sh <<'EOF_DEMO'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/supabase-demo.env
+
+      DB_CONTAINER="$(podman ps --format '{{.Names}}' | grep -E '^supabase-db$' | head -n1 || true)"
+
+      if [ -z "$DB_CONTAINER" ]; then
+        echo "Could not find supabase-db container."
+        podman ps -a
+        exit 1
+      fi
+
+      echo "Using DB container: $DB_CONTAINER"
+
+      podman cp /root/supabase-aios-demo.sql "${DB_CONTAINER}:/tmp/supabase-aios-demo.sql"
+      podman exec -e PGPASSWORD="${POSTGRES_PASSWORD}" "$DB_CONTAINER" \
+        psql -U postgres -d "${POSTGRES_DB}" -f /tmp/supabase-aios-demo.sql
+
+      echo "AI OS demo tables are ready."
+      EOF_DEMO
+
+      chmod +x /root/supabase-create-aios-demo-tables.sh
+
+      if [ "${CREATE_AI_OS_DEMO_TABLES}" = "true" ]; then
+        echo "Creating AI OS demo tables..."
+        for i in $(seq 1 60); do
+          if /root/supabase-create-aios-demo-tables.sh; then
+            break
+          fi
+
+          echo "Demo table setup failed/waiting... attempt $i/60"
+          sleep 5
+        done
+      fi
+
+      echo "Writing helper scripts..."
+
+      cat > /root/supabase-status.sh <<'EOF_STATUS'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/supabase-demo.env
+
+      echo "Containers:"
+      podman ps -a | grep -E "supabase|realtime-dev" || podman ps -a
+
+      echo
+      echo "Studio:"
+      echo "  ${SUPABASE_STUDIO_URL}"
+
+      echo
+      echo "API:"
+      echo "  ${SUPABASE_PUBLIC_URL}"
+
+      echo
+      echo "REST health test:"
+      curl -i "http://127.0.0.1:${SUPABASE_KONG_HTTP_PORT}/rest/v1/" \
+        -H "apikey: ${ANON_KEY}" || true
+
+      echo
+      echo "Studio test:"
+      curl -I "http://127.0.0.1:${SUPABASE_STUDIO_PORT}" || true
+
+      echo
+      echo "REST env check:"
+      podman inspect supabase-rest --format "{{range .Config.Env}}{{println .}}{{end}}" \
+        | grep -E "PGRST_JWT_SECRET|JWT_SECRET" || true
+
+      echo
+      echo "REST logs:"
+      podman logs --tail=80 supabase-rest || true
+      EOF_STATUS
+
+      chmod +x /root/supabase-status.sh
+
+      cat > /root/supabase-keys.sh <<'EOF_KEYS'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/supabase-demo.env
+
+      echo "SUPABASE_URL=${SUPABASE_PUBLIC_URL}"
+      echo "SUPABASE_STUDIO_URL=${SUPABASE_STUDIO_URL}"
+      echo "SUPABASE_ANON_KEY=${ANON_KEY}"
+      echo "SUPABASE_SERVICE_ROLE_KEY=${SERVICE_ROLE_KEY}"
+      echo "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}"
+      echo "DASHBOARD_USERNAME=${DASHBOARD_USERNAME}"
+      echo "DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD}"
+      EOF_KEYS
+
+      chmod +x /root/supabase-keys.sh
+
+      cat > /root/supabase-test-insert.sh <<'EOF_TEST'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/supabase-demo.env
+
+      curl -i -X POST "${SUPABASE_PUBLIC_URL}/rest/v1/startup_events" \
+        -H "apikey: ${SERVICE_ROLE_KEY}" \
+        -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
+        -H "Content-Type: application/json" \
+        -H "Prefer: return=representation" \
+        -d '{
+          "source": "curl-test",
+          "event_type": "founder_feedback",
+          "user_email": "founder@example.com",
+          "user_name": "Demo Founder",
+          "message": "I want my AI OS to understand customer feedback, product usage, and support tickets.",
+          "metadata": {
+            "template": "supabase",
+            "stack": "redu-cloud-ai-os"
+          }
+        }'
+      EOF_TEST
+
+      chmod +x /root/supabase-test-insert.sh
+
+      cat > /root/supabase-test-read.sh <<'EOF_READ'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/supabase-demo.env
+
+      curl -sS "${SUPABASE_PUBLIC_URL}/rest/v1/startup_events?select=*&order=created_at.desc&limit=10" \
+        -H "apikey: ${SERVICE_ROLE_KEY}" \
+        -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" | jq
+      EOF_READ
+
+      chmod +x /root/supabase-test-read.sh
+
+      cat > /root/SUPABASE_README.txt <<EOF_README
+      redu.cloud Supabase AI OS template
+
+      Studio:
+        ${SUPABASE_STUDIO_URL}
+
+      Studio login:
+        Username: ${DASHBOARD_USERNAME}
+        Password: ${DASHBOARD_PASSWORD}
+
+      API URL:
+        ${SUPABASE_PUBLIC_URL}
+
+      Keys:
+        /root/supabase-keys.sh
+
+      Status:
+        /root/supabase-status.sh
+
+      Create AI OS demo tables:
+        /root/supabase-create-aios-demo-tables.sh
+
+      Test insert:
+        /root/supabase-test-insert.sh
+
+      Test read:
+        /root/supabase-test-read.sh
+
+      App directory:
+        /opt/supabase
+
+      Source checkout:
+        /opt/supabase-src
+
+      Env files:
+        /root/supabase-demo.env
+        /opt/supabase/.env
+
+      Logs:
+        /var/log/supabase-bootstrap.log
+
+      Useful commands:
+        cd /opt/supabase && podman-compose --env-file .env ps
+        cd /opt/supabase && podman-compose --env-file .env logs -f
+        systemctl restart supabase
+
+      AI OS demo tables:
+        public.startup_events
+        public.ai_insights
+
+      Notes:
+        This template uses the official Supabase self-hosting docker folder,
+        then adapts it for Podman/podman-compose.
+
+        Important Podman fix:
+          PGRST_JWT_SECRET is patched from:
+            \${JWT_JWKS:-\${JWT_SECRET}}
+          to:
+            \${JWT_SECRET}
+
+        For production, configure:
+          - real domain + HTTPS proxy
+          - SMTP
+          - backups
+          - firewall rules
+          - external object storage if needed
+      EOF_README
+
+      echo "Running final insert test..."
+      if /root/supabase-test-insert.sh; then
+        echo "Final insert test succeeded."
+      else
+        echo "Final insert test failed. Check /root/supabase-status.sh"
+      fi
+
+      echo "========================================"
+      echo " Supabase deployment finished"
+      echo " Studio: ${SUPABASE_STUDIO_URL}"
+      echo " API: ${SUPABASE_PUBLIC_URL}"
+      echo " README: /root/SUPABASE_README.txt"
+      echo " Status: /root/supabase-status.sh"
+      echo " Keys: /root/supabase-keys.sh"
+      echo " Logs: ${LOG_FILE}"
+      echo "========================================"
+
+runcmd:
+  - [ bash, -lc, "/usr/local/bin/supabase_bootstrap.sh > /var/log/supabase-bootstrap-runcmd.log 2>&1" ]

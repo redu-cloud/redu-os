@@ -1,0 +1,1072 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+  - podman
+  - curl
+  - jq
+  - openssl
+  - nodejs
+  - npm
+  - psmisc
+
+write_files:
+  - path: /root/uptime-kuma-demo.env
+    permissions: "0600"
+    content: |
+      # Public URL for users.
+      # Leave empty to auto-detect public IP and use http://IP:3001
+      KUMA_PUBLIC_URL=""
+
+      # Uptime Kuma
+      KUMA_IMAGE="docker.io/louislam/uptime-kuma:2"
+      KUMA_PORT=3001
+
+      # Admin user auto-created by Playwright
+      KUMA_ADMIN_USERNAME=admin
+      KUMA_ADMIN_PASSWORD=ChangeMeStrong123
+
+      # MariaDB for Uptime Kuma
+      KUMA_DB_NAME=uptime_kuma
+      KUMA_DB_USERNAME=uptime_kuma
+      KUMA_DB_PASSWORD=AUTO_GENERATE
+      KUMA_DB_ROOT_PASSWORD=AUTO_GENERATE
+
+      # Discord notification
+      # If left as placeholder, Discord setup is skipped safely.
+      DISCORD_WEBHOOK_URL=YOUR_DISCORD_WEBHOOK_URL_HERE
+      DISCORD_NOTIFICATION_NAME="Discord Alerts"
+      DISCORD_BOT_NAME="redu.cloud Uptime Kuma"
+      DISCORD_PREFIX_MESSAGE="🚨 redu.cloud startup reliability alert"
+
+      # Demo monitors
+      TARGET_1_NAME="redu.cloud"
+      TARGET_1_URL="https://redu.cloud"
+      TARGET_1_INTERVAL=60
+
+      TARGET_2_NAME="redu.cloud Docs"
+      TARGET_2_URL="https://docs.redu.cloud"
+      TARGET_2_INTERVAL=60
+
+      TARGET_3_NAME="Local Uptime Kuma"
+      TARGET_3_URL="http://127.0.0.1:3001"
+      TARGET_3_INTERVAL=60
+
+      TARGET_4_NAME=""
+      TARGET_4_URL=""
+      TARGET_4_INTERVAL=60
+
+      TARGET_5_NAME=""
+      TARGET_5_URL=""
+      TARGET_5_INTERVAL=60
+
+  - path: /etc/containers/registries.conf
+    permissions: "0644"
+    content: |
+      unqualified-search-registries = ["docker.io"]
+
+      [[registry]]
+      prefix = "docker.io"
+      location = "docker.io"
+
+  - path: /usr/local/bin/uptime_kuma_bootstrap.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      LOG_FILE="/var/log/uptime-kuma-bootstrap.log"
+      exec > >(tee -a "$LOG_FILE") 2>&1
+
+      echo "========================================"
+      echo " redu.cloud Uptime Kuma bootstrap"
+      echo " Started: $(date -Is)"
+      echo "========================================"
+
+      source /root/uptime-kuma-demo.env
+
+      APP_DIR="/opt/uptime-kuma"
+      ADMIN_SETUP_DIR="/opt/uptime-kuma-admin-setup"
+
+      mkdir -p "$APP_DIR"
+      mkdir -p "$ADMIN_SETUP_DIR"
+
+      if [ -z "${KUMA_PUBLIC_URL:-}" ]; then
+        PUBLIC_IP="$(curl -fsS --max-time 10 https://api.ipify.org || true)"
+        if [ -z "$PUBLIC_IP" ]; then
+          PUBLIC_IP="$(hostname -I | awk '{print $1}')"
+        fi
+        KUMA_PUBLIC_URL="http://${PUBLIC_IP}:${KUMA_PORT}"
+      fi
+
+      if [ "${KUMA_DB_PASSWORD:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        KUMA_DB_PASSWORD="$(openssl rand -hex 24)"
+      fi
+
+      if [ "${KUMA_DB_ROOT_PASSWORD:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        KUMA_DB_ROOT_PASSWORD="$(openssl rand -hex 24)"
+      fi
+
+      echo "Writing normalized env file..."
+
+      cat > /root/uptime-kuma-demo.env <<EOF
+      KUMA_PUBLIC_URL="${KUMA_PUBLIC_URL}"
+      KUMA_IMAGE="${KUMA_IMAGE}"
+      KUMA_PORT=${KUMA_PORT}
+
+      KUMA_ADMIN_USERNAME=${KUMA_ADMIN_USERNAME}
+      KUMA_ADMIN_PASSWORD=${KUMA_ADMIN_PASSWORD}
+
+      KUMA_DB_NAME=${KUMA_DB_NAME}
+      KUMA_DB_USERNAME=${KUMA_DB_USERNAME}
+      KUMA_DB_PASSWORD=${KUMA_DB_PASSWORD}
+      KUMA_DB_ROOT_PASSWORD=${KUMA_DB_ROOT_PASSWORD}
+
+      DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+      DISCORD_NOTIFICATION_NAME="${DISCORD_NOTIFICATION_NAME}"
+      DISCORD_BOT_NAME="${DISCORD_BOT_NAME}"
+      DISCORD_PREFIX_MESSAGE="${DISCORD_PREFIX_MESSAGE}"
+
+      TARGET_1_NAME="${TARGET_1_NAME}"
+      TARGET_1_URL="${TARGET_1_URL}"
+      TARGET_1_INTERVAL=${TARGET_1_INTERVAL}
+
+      TARGET_2_NAME="${TARGET_2_NAME}"
+      TARGET_2_URL="${TARGET_2_URL}"
+      TARGET_2_INTERVAL=${TARGET_2_INTERVAL}
+
+      TARGET_3_NAME="${TARGET_3_NAME}"
+      TARGET_3_URL="${TARGET_3_URL}"
+      TARGET_3_INTERVAL=${TARGET_3_INTERVAL}
+
+      TARGET_4_NAME="${TARGET_4_NAME}"
+      TARGET_4_URL="${TARGET_4_URL}"
+      TARGET_4_INTERVAL=${TARGET_4_INTERVAL}
+
+      TARGET_5_NAME="${TARGET_5_NAME}"
+      TARGET_5_URL="${TARGET_5_URL}"
+      TARGET_5_INTERVAL=${TARGET_5_INTERVAL}
+      EOF
+
+      chmod 600 /root/uptime-kuma-demo.env
+
+      source /root/uptime-kuma-demo.env
+
+      echo "Creating Podman network..."
+      podman network create kuma-net 2>/dev/null || true
+
+      echo "Cleaning old containers if present..."
+      podman rm -f uptime-kuma uptime-kuma-mariadb 2>/dev/null || true
+
+      echo "Freeing port ${KUMA_PORT} if needed..."
+      fuser -k "${KUMA_PORT}/tcp" 2>/dev/null || true
+
+      echo "Creating volumes..."
+      podman volume create uptime_kuma_data || true
+      podman volume create uptime_kuma_mariadb_data || true
+
+      echo "Starting MariaDB..."
+
+      podman run -d \
+        --name uptime-kuma-mariadb \
+        --restart unless-stopped \
+        --network kuma-net \
+        -e MARIADB_DATABASE="${KUMA_DB_NAME}" \
+        -e MARIADB_USER="${KUMA_DB_USERNAME}" \
+        -e MARIADB_PASSWORD="${KUMA_DB_PASSWORD}" \
+        -e MARIADB_ROOT_PASSWORD="${KUMA_DB_ROOT_PASSWORD}" \
+        -v uptime_kuma_mariadb_data:/var/lib/mysql \
+        docker.io/mariadb:11
+
+      echo "Waiting for MariaDB..."
+
+      for i in $(seq 1 90); do
+        if podman exec uptime-kuma-mariadb mariadb-admin ping -h 127.0.0.1 --silent >/dev/null 2>&1; then
+          echo "MariaDB is ready."
+          break
+        fi
+
+        echo "Waiting for MariaDB... attempt $i/90"
+        sleep 3
+      done
+
+      if ! podman exec uptime-kuma-mariadb mariadb-admin ping -h 127.0.0.1 --silent >/dev/null 2>&1; then
+        echo "MariaDB did not become ready."
+        podman logs --tail=150 uptime-kuma-mariadb || true
+        exit 1
+      fi
+
+      echo "Starting Uptime Kuma..."
+
+      podman run -d \
+        --name uptime-kuma \
+        --restart unless-stopped \
+        --network kuma-net \
+        -p "${KUMA_PORT}:3001" \
+        -e UPTIME_KUMA_DB_TYPE="mariadb" \
+        -e UPTIME_KUMA_DB_HOSTNAME="uptime-kuma-mariadb" \
+        -e UPTIME_KUMA_DB_PORT="3306" \
+        -e UPTIME_KUMA_DB_NAME="${KUMA_DB_NAME}" \
+        -e UPTIME_KUMA_DB_USERNAME="${KUMA_DB_USERNAME}" \
+        -e UPTIME_KUMA_DB_PASSWORD="${KUMA_DB_PASSWORD}" \
+        -v uptime_kuma_data:/app/data \
+        "${KUMA_IMAGE}"
+
+      echo "Creating systemd service..."
+
+      cat > /etc/systemd/system/uptime-kuma.service <<EOF
+      [Unit]
+      Description=Uptime Kuma monitoring stack
+      Requires=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/bin/podman start uptime-kuma-mariadb uptime-kuma
+      ExecStop=/usr/bin/podman stop uptime-kuma uptime-kuma-mariadb
+      TimeoutStartSec=0
+
+      [Install]
+      WantedBy=multi-user.target
+      EOF
+
+      systemctl daemon-reload
+      systemctl enable uptime-kuma.service
+
+      echo "Waiting for Uptime Kuma..."
+
+      KUMA_READY=0
+
+      for i in $(seq 1 120); do
+        if curl -fsS "http://127.0.0.1:${KUMA_PORT}" >/dev/null 2>&1; then
+          KUMA_READY=1
+          echo "Uptime Kuma is reachable."
+          break
+        fi
+
+        echo "Waiting for Uptime Kuma... attempt $i/120"
+        sleep 5
+      done
+
+      if [ "$KUMA_READY" != "1" ]; then
+        echo "Uptime Kuma did not become reachable."
+        podman ps -a || true
+        podman logs --tail=150 uptime-kuma || true
+        podman logs --tail=150 uptime-kuma-mariadb || true
+        exit 1
+      fi
+
+      echo "Installing Playwright..."
+      cd "$ADMIN_SETUP_DIR"
+
+      cat > package.json <<'EOF'
+      {
+        "scripts": {
+          "start": "node create-admin.js"
+        },
+        "dependencies": {
+          "playwright": "^1.49.0"
+        }
+      }
+      EOF
+
+      npm install
+      npx playwright install --with-deps chromium
+
+      echo "Writing create-admin.js..."
+
+      cat > "$ADMIN_SETUP_DIR/create-admin.js" <<'EOF'
+      const { chromium } = require("playwright");
+
+      const KUMA_URL = process.env.KUMA_URL || "http://127.0.0.1:3001";
+      const KUMA_ADMIN_USERNAME = process.env.KUMA_ADMIN_USERNAME || "admin";
+      const KUMA_ADMIN_PASSWORD = process.env.KUMA_ADMIN_PASSWORD || "ChangeMeStrong123";
+
+      (async () => {
+        const browser = await chromium.launch({
+          headless: true
+        });
+
+        const page = await browser.newPage();
+
+        console.log(`Opening ${KUMA_URL}...`);
+
+        await page.goto(KUMA_URL, {
+          waitUntil: "networkidle",
+          timeout: 120000
+        });
+
+        const pageText = await page.textContent("body").catch(() => "");
+
+        if (
+          pageText &&
+          (
+            pageText.includes("Dashboard") ||
+            pageText.includes("Add New Monitor") ||
+            pageText.includes("Logout") ||
+            pageText.includes("Maintenance")
+          )
+        ) {
+          console.log("Uptime Kuma already appears to be initialized.");
+          await browser.close();
+          process.exit(0);
+        }
+
+        console.log("Trying to create initial admin user...");
+
+        const usernameSelectors = [
+          'input[name="username"]',
+          'input[autocomplete="username"]',
+          'input[type="text"]'
+        ];
+
+        let usernameFilled = false;
+
+        for (const selector of usernameSelectors) {
+          const input = page.locator(selector).first();
+
+          if (await input.count()) {
+            await input.fill(KUMA_ADMIN_USERNAME);
+            usernameFilled = true;
+            break;
+          }
+        }
+
+        if (!usernameFilled) {
+          throw new Error("Could not find username input.");
+        }
+
+        const passwordInputs = page.locator('input[type="password"]');
+        const passwordCount = await passwordInputs.count();
+
+        if (passwordCount >= 1) {
+          await passwordInputs.nth(0).fill(KUMA_ADMIN_PASSWORD);
+        } else {
+          throw new Error("Could not find password input.");
+        }
+
+        if (passwordCount >= 2) {
+          await passwordInputs.nth(1).fill(KUMA_ADMIN_PASSWORD);
+        }
+
+        const buttons = [
+          page.getByRole("button", { name: /create/i }),
+          page.getByRole("button", { name: /setup/i }),
+          page.getByRole("button", { name: /set up/i }),
+          page.getByRole("button", { name: /submit/i }),
+          page.locator("button[type='submit']").first(),
+          page.locator("button").first()
+        ];
+
+        let clicked = false;
+
+        for (const button of buttons) {
+          if (await button.count()) {
+            await button.click();
+            clicked = true;
+            break;
+          }
+        }
+
+        if (!clicked) {
+          throw new Error("Could not find submit/create button.");
+        }
+
+        await page.waitForTimeout(5000);
+
+        const afterText = await page.textContent("body").catch(() => "");
+
+        if (
+          afterText &&
+          (
+            afterText.includes("Dashboard") ||
+            afterText.includes("Add New Monitor") ||
+            afterText.includes("Logout") ||
+            afterText.includes("Maintenance")
+          )
+        ) {
+          console.log("Admin user created successfully.");
+        } else {
+          console.log("Submitted setup form.");
+          console.log(afterText ? afterText.slice(0, 1000) : "");
+        }
+
+        await browser.close();
+      })();
+      EOF
+
+      echo "Writing create-monitors.js..."
+
+      cat > "$ADMIN_SETUP_DIR/create-monitors.js" <<'EOF'
+      const { chromium } = require("playwright");
+
+      const KUMA_URL = process.env.KUMA_URL || "http://127.0.0.1:3001";
+      const KUMA_ADMIN_USERNAME = process.env.KUMA_ADMIN_USERNAME || "admin";
+      const KUMA_ADMIN_PASSWORD = process.env.KUMA_ADMIN_PASSWORD || "ChangeMeStrong123";
+
+      const targets = JSON.parse(process.env.KUMA_MONITORS_JSON || "[]");
+
+      async function fillFirstVisible(page, selectors, value) {
+        for (const selector of selectors) {
+          const locator = page.locator(selector).first();
+          if (await locator.count()) {
+            try {
+              await locator.fill(value);
+              return true;
+            } catch (_) {}
+          }
+        }
+        return false;
+      }
+
+      async function clickFirstVisible(page, candidates) {
+        for (const candidate of candidates) {
+          try {
+            if (await candidate.count()) {
+              await candidate.click();
+              return true;
+            }
+          } catch (_) {}
+        }
+        return false;
+      }
+
+      (async () => {
+        if (!targets.length) {
+          console.log("No monitors provided. Nothing to create.");
+          process.exit(0);
+        }
+
+        const browser = await chromium.launch({
+          headless: true
+        });
+
+        const page = await browser.newPage();
+
+        console.log(`Opening ${KUMA_URL}...`);
+
+        await page.goto(KUMA_URL, {
+          waitUntil: "networkidle",
+          timeout: 120000
+        });
+
+        const bodyText = await page.textContent("body").catch(() => "");
+
+        if (
+          bodyText &&
+          bodyText.toLowerCase().includes("username") &&
+          bodyText.toLowerCase().includes("password")
+        ) {
+          console.log("Login page detected.");
+
+          await fillFirstVisible(page, [
+            'input[name="username"]',
+            'input[autocomplete="username"]',
+            'input[type="text"]'
+          ], KUMA_ADMIN_USERNAME);
+
+          await fillFirstVisible(page, [
+            'input[name="password"]',
+            'input[autocomplete="current-password"]',
+            'input[type="password"]'
+          ], KUMA_ADMIN_PASSWORD);
+
+          const loginClicked = await clickFirstVisible(page, [
+            page.getByRole("button", { name: /login/i }),
+            page.getByRole("button", { name: /sign in/i }),
+            page.locator("button[type='submit']").first(),
+            page.locator("button").first()
+          ]);
+
+          if (!loginClicked) {
+            throw new Error("Could not click login button.");
+          }
+
+          await page.waitForTimeout(5000);
+        }
+
+        for (const target of targets) {
+          const name = target.name;
+          const url = target.url;
+          const interval = String(target.interval || 60);
+
+          if (!name || !url) {
+            console.log("Skipping invalid target:", target);
+            continue;
+          }
+
+          console.log(`Creating monitor: ${name} -> ${url}`);
+
+          await page.goto(`${KUMA_URL}/add`, {
+            waitUntil: "networkidle",
+            timeout: 120000
+          });
+
+          await page.waitForTimeout(2000);
+
+          const pageText = await page.textContent("body").catch(() => "");
+
+          if (pageText && pageText.includes(name)) {
+            console.log(`Monitor may already exist: ${name}`);
+            continue;
+          }
+
+          const nameFilled = await fillFirstVisible(page, [
+            'input[name="name"]',
+            'input[placeholder*="Name" i]',
+            'input[type="text"]'
+          ], name);
+
+          if (!nameFilled) {
+            throw new Error(`Could not fill monitor name for ${name}`);
+          }
+
+          const urlFilled = await fillFirstVisible(page, [
+            'input[name="url"]',
+            'input[placeholder*="URL" i]',
+            'input[placeholder*="https" i]',
+            'input[type="url"]'
+          ], url);
+
+          if (!urlFilled) {
+            const textInputs = page.locator('input[type="text"]');
+            const count = await textInputs.count();
+
+            if (count >= 2) {
+              await textInputs.nth(1).fill(url);
+            } else {
+              throw new Error(`Could not fill monitor URL for ${name}`);
+            }
+          }
+
+          await fillFirstVisible(page, [
+            'input[name="interval"]',
+            'input[placeholder*="interval" i]'
+          ], interval);
+
+          const saveClicked = await clickFirstVisible(page, [
+            page.getByRole("button", { name: /save/i }),
+            page.getByRole("button", { name: /create/i }),
+            page.getByRole("button", { name: /add/i }),
+            page.locator("button[type='submit']").first()
+          ]);
+
+          if (!saveClicked) {
+            throw new Error(`Could not save monitor: ${name}`);
+          }
+
+          await page.waitForTimeout(4000);
+
+          console.log(`Submitted monitor: ${name}`);
+        }
+
+        await browser.close();
+
+        console.log("Monitor automation finished.");
+      })();
+      EOF
+
+      echo "Writing setup-discord-v2.js..."
+
+      cat > "$ADMIN_SETUP_DIR/setup-discord-v2.js" <<'EOF'
+      const { chromium } = require("playwright");
+
+      const KUMA_URL = process.env.KUMA_URL || "http://127.0.0.1:3001";
+      const KUMA_ADMIN_USERNAME = process.env.KUMA_ADMIN_USERNAME || "admin";
+      const KUMA_ADMIN_PASSWORD = process.env.KUMA_ADMIN_PASSWORD || "ChangeMeStrong123";
+
+      const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "";
+      const DISCORD_NOTIFICATION_NAME = process.env.DISCORD_NOTIFICATION_NAME || "Discord Alerts";
+      const DISCORD_BOT_NAME = process.env.DISCORD_BOT_NAME || "redu.cloud Uptime Kuma";
+      const DISCORD_PREFIX_MESSAGE =
+        process.env.DISCORD_PREFIX_MESSAGE ||
+        "🚨 redu.cloud startup reliability alert";
+
+      function isRealDiscordWebhook(url) {
+        return (
+          url &&
+          url.startsWith("https://discord.com/api/webhooks/") &&
+          !url.includes("YOUR_DISCORD_WEBHOOK_URL_HERE")
+        );
+      }
+
+      async function fillFirstVisible(page, selectors, value) {
+        for (const selector of selectors) {
+          const locator = page.locator(selector).first();
+
+          if (await locator.count()) {
+            try {
+              await locator.fill(value);
+              return true;
+            } catch (_) {}
+          }
+        }
+
+        return false;
+      }
+
+      async function clickFirstVisible(page, candidates) {
+        for (const candidate of candidates) {
+          try {
+            if (await candidate.count()) {
+              await candidate.click({ force: true });
+              return true;
+            }
+          } catch (_) {}
+        }
+
+        return false;
+      }
+
+      async function loginIfNeeded(page) {
+        await page.goto(KUMA_URL, {
+          waitUntil: "networkidle",
+          timeout: 120000
+        });
+
+        const bodyText = await page.textContent("body").catch(() => "");
+
+        if (
+          bodyText &&
+          bodyText.toLowerCase().includes("username") &&
+          bodyText.toLowerCase().includes("password")
+        ) {
+          console.log("Login page detected.");
+
+          await fillFirstVisible(page, [
+            'input[name="username"]',
+            'input[autocomplete="username"]',
+            'input[type="text"]'
+          ], KUMA_ADMIN_USERNAME);
+
+          await fillFirstVisible(page, [
+            'input[name="password"]',
+            'input[autocomplete="current-password"]',
+            'input[type="password"]'
+          ], KUMA_ADMIN_PASSWORD);
+
+          const loginClicked = await clickFirstVisible(page, [
+            page.getByRole("button", { name: /login/i }),
+            page.getByRole("button", { name: /sign in/i }),
+            page.locator("button[type='submit']").first(),
+            page.locator("button").first()
+          ]);
+
+          if (!loginClicked) {
+            throw new Error("Could not click login button.");
+          }
+
+          await page.waitForTimeout(5000);
+        }
+      }
+
+      async function dumpButtons(page, label) {
+        console.log(`\nButtons at ${label}:`);
+
+        const buttons = page.locator("button");
+        const count = await buttons.count();
+
+        for (let i = 0; i < count; i++) {
+          const text = await buttons.nth(i).textContent().catch(() => "");
+          console.log(i, JSON.stringify((text || "").trim()));
+        }
+      }
+
+      async function checkCheckboxNearText(page, textRegex) {
+        const labels = page.locator("label");
+        const labelCount = await labels.count();
+
+        for (let i = 0; i < labelCount; i++) {
+          const label = labels.nth(i);
+          const text = await label.textContent().catch(() => "");
+
+          if (textRegex.test(text || "")) {
+            const input = label.locator('input[type="checkbox"]').first();
+
+            if (await input.count()) {
+              const checked = await input.isChecked().catch(() => false);
+
+              if (!checked) {
+                await input.check({ force: true }).catch(async () => {
+                  await label.click({ force: true });
+                });
+              }
+
+              return true;
+            }
+
+            await label.click({ force: true }).catch(() => {});
+            return true;
+          }
+        }
+
+        return false;
+      }
+
+      async function selectDiscord(page) {
+        const selects = page.locator("select");
+        const count = await selects.count();
+
+        for (let i = 0; i < count; i++) {
+          const select = selects.nth(i);
+
+          try {
+            await select.selectOption("discord");
+            return true;
+          } catch (_) {}
+
+          try {
+            await select.selectOption("Discord");
+            return true;
+          } catch (_) {}
+
+          try {
+            await select.selectOption({ label: /Discord/i });
+            return true;
+          } catch (_) {}
+        }
+
+        const clicked = await clickFirstVisible(page, [
+          page.getByText("Discord", { exact: true }),
+          page.getByRole("option", { name: /discord/i }),
+          page.getByRole("button", { name: /discord/i }),
+          page.locator('*:has-text("Discord")').first()
+        ]);
+
+        return clicked;
+      }
+
+      async function checkExactCheckboxIndex(page, index) {
+        const boxes = page.locator('input[type="checkbox"]');
+        const count = await boxes.count();
+
+        if (index >= count) {
+          return false;
+        }
+
+        const box = boxes.nth(index);
+        const checked = await box.isChecked().catch(() => false);
+
+        if (!checked) {
+          await box.check({ force: true }).catch(async () => {
+            await box.click({ force: true });
+          });
+        }
+
+        return true;
+      }
+
+      (async () => {
+        if (!isRealDiscordWebhook(DISCORD_WEBHOOK_URL)) {
+          console.log("Discord webhook not configured. Skipping Discord notification setup.");
+          process.exit(0);
+        }
+
+        const browser = await chromium.launch({
+          headless: true
+        });
+
+        const page = await browser.newPage();
+
+        console.log(`Opening ${KUMA_URL}...`);
+        await loginIfNeeded(page);
+
+        console.log("Opening notifications page...");
+
+        await page.goto(`${KUMA_URL}/settings/notifications`, {
+          waitUntil: "networkidle",
+          timeout: 120000
+        });
+
+        await page.waitForTimeout(3000);
+
+        console.log("Current URL:", page.url());
+
+        const notificationText = await page.textContent("body").catch(() => "");
+
+        if (notificationText.includes(DISCORD_NOTIFICATION_NAME)) {
+          console.log(`Discord notification already exists: ${DISCORD_NOTIFICATION_NAME}`);
+          await browser.close();
+          process.exit(0);
+        }
+
+        console.log("Clicking Set Up Notification...");
+
+        const setupClicked = await clickFirstVisible(page, [
+          page.getByRole("button", { name: /set up notification/i }),
+          page.getByText("Set Up Notification", { exact: false }),
+          page.locator('button:has-text("Set Up Notification")').first(),
+          page.locator('button').filter({ hasText: "Set Up Notification" }).first()
+        ]);
+
+        if (!setupClicked) {
+          await dumpButtons(page, "notifications tab");
+
+          await page.screenshot({
+            path: "/root/uptime-kuma-no-setup-notification-button.png",
+            fullPage: true
+          });
+
+          throw new Error("Could not find Set Up Notification button.");
+        }
+
+        await page.waitForTimeout(3000);
+
+        console.log("Selecting Discord...");
+
+        const selectedDiscord = await selectDiscord(page);
+
+        if (!selectedDiscord) {
+          await page.screenshot({
+            path: "/root/uptime-kuma-no-discord-select.png",
+            fullPage: true
+          });
+
+          throw new Error("Could not select Discord.");
+        }
+
+        await page.waitForTimeout(2000);
+
+        console.log("Filling Discord form...");
+
+        const nameFilled = await fillFirstVisible(page, [
+          '#notification-name',
+          'input[id="notification-name"]',
+          'input[type="text"]'
+        ], DISCORD_NOTIFICATION_NAME);
+
+        if (!nameFilled) {
+          throw new Error("Could not fill notification friendly name.");
+        }
+
+        const webhookFilled = await fillFirstVisible(page, [
+          'input[type="password"]'
+        ], DISCORD_WEBHOOK_URL);
+
+        if (!webhookFilled) {
+          await page.screenshot({
+            path: "/root/uptime-kuma-discord-webhook-fill-failed.png",
+            fullPage: true
+          });
+
+          throw new Error("Could not fill Discord webhook URL.");
+        }
+
+        await fillFirstVisible(page, [
+          '#discord-username',
+          'input[id="discord-username"]'
+        ], DISCORD_BOT_NAME);
+
+        await fillFirstVisible(page, [
+          '#discord-prefix-message',
+          'input[id="discord-prefix-message"]'
+        ], DISCORD_PREFIX_MESSAGE);
+
+        console.log("Enabling default notification and applying to existing monitors...");
+
+        await checkCheckboxNearText(page, /default enabled/i);
+        await checkCheckboxNearText(page, /apply on all existing monitors/i);
+
+        await checkExactCheckboxIndex(page, 12);
+        await checkExactCheckboxIndex(page, 13);
+
+        console.log("Clicking Test...");
+
+        await clickFirstVisible(page, [
+          page.getByRole("button", { name: /^test$/i }),
+          page.locator('button:has-text("Test")').last()
+        ]);
+
+        await page.waitForTimeout(4000);
+
+        console.log("Clicking Save...");
+
+        const saved = await clickFirstVisible(page, [
+          page.getByRole("button", { name: /^save$/i }),
+          page.locator('button:has-text("Save")').last()
+        ]);
+
+        if (!saved) {
+          await dumpButtons(page, "discord form");
+
+          await page.screenshot({
+            path: "/root/uptime-kuma-discord-save-failed.png",
+            fullPage: true
+          });
+
+          throw new Error("Could not save Discord notification.");
+        }
+
+        await page.waitForTimeout(4000);
+
+        console.log("Discord notification setup finished.");
+
+        await browser.close();
+      })();
+      EOF
+
+      echo "Running admin auto-create..."
+
+      KUMA_URL="http://127.0.0.1:${KUMA_PORT}" \
+      KUMA_ADMIN_USERNAME="${KUMA_ADMIN_USERNAME}" \
+      KUMA_ADMIN_PASSWORD="${KUMA_ADMIN_PASSWORD}" \
+      node "$ADMIN_SETUP_DIR/create-admin.js"
+
+      echo "Building monitors JSON..."
+
+      KUMA_MONITORS_JSON="$(jq -n \
+        --arg n1 "$TARGET_1_NAME" --arg u1 "$TARGET_1_URL" --argjson i1 "$TARGET_1_INTERVAL" \
+        --arg n2 "$TARGET_2_NAME" --arg u2 "$TARGET_2_URL" --argjson i2 "$TARGET_2_INTERVAL" \
+        --arg n3 "$TARGET_3_NAME" --arg u3 "$TARGET_3_URL" --argjson i3 "$TARGET_3_INTERVAL" \
+        --arg n4 "$TARGET_4_NAME" --arg u4 "$TARGET_4_URL" --argjson i4 "$TARGET_4_INTERVAL" \
+        --arg n5 "$TARGET_5_NAME" --arg u5 "$TARGET_5_URL" --argjson i5 "$TARGET_5_INTERVAL" \
+        '
+        [
+          {name: $n1, url: $u1, interval: $i1},
+          {name: $n2, url: $u2, interval: $i2},
+          {name: $n3, url: $u3, interval: $i3},
+          {name: $n4, url: $u4, interval: $i4},
+          {name: $n5, url: $u5, interval: $i5}
+        ]
+        | map(select(.name != "" and .url != ""))
+        ')"
+
+      echo "$KUMA_MONITORS_JSON" > /root/uptime-kuma-monitors.json
+
+      echo "Running monitor auto-create..."
+
+      KUMA_MONITORS_JSON="${KUMA_MONITORS_JSON}" \
+      KUMA_URL="http://127.0.0.1:${KUMA_PORT}" \
+      KUMA_ADMIN_USERNAME="${KUMA_ADMIN_USERNAME}" \
+      KUMA_ADMIN_PASSWORD="${KUMA_ADMIN_PASSWORD}" \
+      node "$ADMIN_SETUP_DIR/create-monitors.js"
+
+      echo "Running Discord notification setup..."
+
+      DISCORD_WEBHOOK_URL="${DISCORD_WEBHOOK_URL}" \
+      KUMA_URL="http://127.0.0.1:${KUMA_PORT}" \
+      KUMA_ADMIN_USERNAME="${KUMA_ADMIN_USERNAME}" \
+      KUMA_ADMIN_PASSWORD="${KUMA_ADMIN_PASSWORD}" \
+      DISCORD_NOTIFICATION_NAME="${DISCORD_NOTIFICATION_NAME}" \
+      DISCORD_BOT_NAME="${DISCORD_BOT_NAME}" \
+      DISCORD_PREFIX_MESSAGE="${DISCORD_PREFIX_MESSAGE}" \
+      node "$ADMIN_SETUP_DIR/setup-discord-v2.js"
+
+      echo "Writing helper scripts..."
+
+      cat > /root/uptime-kuma-status.sh <<'EOF'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/uptime-kuma-demo.env
+
+      echo "Containers:"
+      podman ps -a --filter name=uptime-kuma
+
+      echo
+      echo "Uptime Kuma local check:"
+      curl -fsS "http://127.0.0.1:${KUMA_PORT}" >/dev/null && echo "Uptime Kuma UI is reachable."
+
+      echo
+      echo "Monitors JSON:"
+      cat /root/uptime-kuma-monitors.json | jq .
+
+      echo
+      echo "Recent Uptime Kuma logs:"
+      podman logs --tail=120 uptime-kuma || true
+
+      echo
+      echo "Recent MariaDB logs:"
+      podman logs --tail=80 uptime-kuma-mariadb || true
+      EOF
+
+      chmod +x /root/uptime-kuma-status.sh
+
+      cat > /root/uptime-kuma-recreate-discord.sh <<'EOF'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/uptime-kuma-demo.env
+
+      DISCORD_WEBHOOK_URL="${DISCORD_WEBHOOK_URL}" \
+      KUMA_URL="http://127.0.0.1:${KUMA_PORT}" \
+      KUMA_ADMIN_USERNAME="${KUMA_ADMIN_USERNAME}" \
+      KUMA_ADMIN_PASSWORD="${KUMA_ADMIN_PASSWORD}" \
+      DISCORD_NOTIFICATION_NAME="${DISCORD_NOTIFICATION_NAME}" \
+      DISCORD_BOT_NAME="${DISCORD_BOT_NAME}" \
+      DISCORD_PREFIX_MESSAGE="${DISCORD_PREFIX_MESSAGE}" \
+      node /opt/uptime-kuma-admin-setup/setup-discord-v2.js
+      EOF
+
+      chmod +x /root/uptime-kuma-recreate-discord.sh
+
+      cat > /root/UPTIME_KUMA_README.txt <<EOF
+      redu.cloud Uptime Kuma monitoring template
+
+      Uptime Kuma UI:
+        ${KUMA_PUBLIC_URL}
+
+      Admin login:
+        Username: ${KUMA_ADMIN_USERNAME}
+        Password: ${KUMA_ADMIN_PASSWORD}
+
+      Database:
+        Type: MariaDB
+        Host: uptime-kuma-mariadb
+        Database: ${KUMA_DB_NAME}
+        Username: ${KUMA_DB_USERNAME}
+        Password: ${KUMA_DB_PASSWORD}
+
+      Discord:
+        Notification name: ${DISCORD_NOTIFICATION_NAME}
+        Bot display name: ${DISCORD_BOT_NAME}
+
+      If DISCORD_WEBHOOK_URL was left as placeholder:
+        Discord setup was skipped safely.
+
+      Pre-created monitors:
+        ${TARGET_1_NAME} - ${TARGET_1_URL}
+        ${TARGET_2_NAME} - ${TARGET_2_URL}
+        ${TARGET_3_NAME} - ${TARGET_3_URL}
+        ${TARGET_4_NAME} - ${TARGET_4_URL}
+        ${TARGET_5_NAME} - ${TARGET_5_URL}
+
+      Helper commands:
+        /root/uptime-kuma-status.sh
+        /root/uptime-kuma-recreate-discord.sh
+
+      Important files:
+        /root/uptime-kuma-demo.env
+        /root/uptime-kuma-monitors.json
+        /opt/uptime-kuma-admin-setup/create-admin.js
+        /opt/uptime-kuma-admin-setup/create-monitors.js
+        /opt/uptime-kuma-admin-setup/setup-discord-v2.js
+
+      Logs:
+        /var/log/uptime-kuma-bootstrap.log
+        /var/log/uptime-kuma-bootstrap-runcmd.log
+        podman logs -f uptime-kuma
+        podman logs -f uptime-kuma-mariadb
+
+      Video demo flow:
+        1. Deploy Uptime Kuma on redu.cloud
+        2. Open ${KUMA_PUBLIC_URL}
+        3. Login with the auto-created admin
+        4. Show pre-created monitors
+        5. Show Discord test notification
+        6. Stop one monitored service or change a URL to demonstrate alerting
+        7. Explain this as the reliability layer for an AI-native startup stack
+      EOF
+
+      echo "========================================"
+      echo " Uptime Kuma deployment finished"
+      echo " UI: ${KUMA_PUBLIC_URL}"
+      echo " Admin: ${KUMA_ADMIN_USERNAME}"
+      echo " README: /root/UPTIME_KUMA_README.txt"
+      echo " Logs: ${LOG_FILE}"
+      echo "========================================"
+
+runcmd:
+  - [ bash, -lc, "/usr/local/bin/uptime_kuma_bootstrap.sh > /var/log/uptime-kuma-bootstrap-runcmd.log 2>&1" ]

@@ -1,0 +1,804 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+  - podman
+  - podman-compose
+  - uidmap
+  - curl
+  - jq
+  - openssl
+  - python3
+  - psmisc
+
+write_files:
+  - path: /root/glitchtip-demo.env
+    permissions: "0600"
+    owner: root:root
+    content: |
+      # redu.cloud GlitchTip template
+
+      # Public URL for users.
+      # Leave empty to auto-detect public IP and use http://IP:8000
+      GLITCHTIP_PUBLIC_URL=""
+
+      # Exposed port
+      GLITCHTIP_PORT=8000
+
+      # Container image
+      GLITCHTIP_IMAGE=docker.io/glitchtip/glitchtip:latest
+
+      # First/admin user
+      GLITCHTIP_ADMIN_EMAIL=admin@example.com
+      GLITCHTIP_ADMIN_PASSWORD=ChangeMeStrong123!
+      GLITCHTIP_ADMIN_USERNAME=admin
+
+      # Auto-created organization/team/project
+      GLITCHTIP_ORG_NAME="redu.cloud"
+      GLITCHTIP_TEAM_NAME="Default Team"
+      GLITCHTIP_PROJECT_NAME="AI OS Demo"
+
+      # App secret. Leave AUTO_GENERATE.
+      GLITCHTIP_SECRET_KEY=AUTO_GENERATE
+
+      # PostgreSQL
+      POSTGRES_DB=glitchtip
+      POSTGRES_USER=glitchtip
+      POSTGRES_PASSWORD=AUTO_GENERATE
+
+      # Redis
+      REDIS_PASSWORD=AUTO_GENERATE
+
+      # Email.
+      # For demo mode, consolemail:// prints email to logs.
+      EMAIL_URL=consolemail://
+      DEFAULT_FROM_EMAIL=no-reply@example.com
+
+      # Registration behavior
+      ENABLE_USER_REGISTRATION=true
+      ENABLE_ORGANIZATION_CREATION=true
+
+      # Features
+      GLITCHTIP_ENABLE_UPTIME=true
+      GLITCHTIP_ENABLE_LOGS=true
+      GLITCHTIP_ENABLE_MCP=false
+
+      # Branding
+      GLITCHTIP_INSTANCE_NAME="redu.cloud GlitchTip"
+
+      # Set true if reusing a broken VM and you want to remove old containers.
+      # This does not delete volumes unless you manually remove them.
+      GLITCHTIP_RESET_CONTAINERS_ON_BOOT=true
+
+  - path: /usr/local/bin/glitchtip_bootstrap.sh
+    permissions: "0755"
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      LOG_FILE="/var/log/glitchtip-bootstrap.log"
+      exec > >(tee -a "$LOG_FILE") 2>&1
+
+      echo "========================================"
+      echo " redu.cloud GlitchTip bootstrap"
+      echo " Started: $(date -Is)"
+      echo "========================================"
+
+      source /root/glitchtip-demo.env
+
+      APP_DIR="/opt/glitchtip"
+
+      mkdir -p "$APP_DIR"
+      cd "$APP_DIR"
+
+      echo "Enabling Podman socket..."
+      systemctl enable --now podman.socket
+
+      echo "Creating Docker-compatible socket symlink..."
+      mkdir -p /var/run
+      ln -sf /run/podman/podman.sock /var/run/docker.sock
+
+      echo "Writing Podman registry config..."
+      cat > /etc/containers/registries.conf <<'EOF_REG'
+      unqualified-search-registries = ["docker.io"]
+
+      [[registry]]
+      prefix = "docker.io"
+      location = "docker.io"
+      EOF_REG
+
+      echo "Setting Redis memory overcommit..."
+      sysctl vm.overcommit_memory=1 || true
+      cat > /etc/sysctl.d/99-glitchtip-redis.conf <<'EOF_SYSCTL'
+      vm.overcommit_memory = 1
+      EOF_SYSCTL
+
+      if [ -z "${GLITCHTIP_PUBLIC_URL:-}" ]; then
+        PUBLIC_IP="$(curl -fsS --max-time 10 https://api.ipify.org || true)"
+        if [ -z "$PUBLIC_IP" ]; then
+          PUBLIC_IP="$(hostname -I | awk '{print $1}')"
+        fi
+        GLITCHTIP_PUBLIC_URL="http://${PUBLIC_IP}:${GLITCHTIP_PORT}"
+      fi
+
+      if [[ "$GLITCHTIP_PUBLIC_URL" != http://* && "$GLITCHTIP_PUBLIC_URL" != https://* ]]; then
+        GLITCHTIP_PUBLIC_URL="https://${GLITCHTIP_PUBLIC_URL}"
+      fi
+
+      GLITCHTIP_HOST="$(echo "$GLITCHTIP_PUBLIC_URL" | sed -E 's#^https?://##; s#/.*$##; s#:.*$##')"
+
+      generate_hex() {
+        openssl rand -hex "$1"
+      }
+
+      if [ "${GLITCHTIP_SECRET_KEY:-AUTO_GENERATE}" = "AUTO_GENERATE" ] || [ -z "${GLITCHTIP_SECRET_KEY:-}" ]; then
+        GLITCHTIP_SECRET_KEY="$(generate_hex 48)"
+      fi
+
+      if [ "${POSTGRES_PASSWORD:-AUTO_GENERATE}" = "AUTO_GENERATE" ] || [ -z "${POSTGRES_PASSWORD:-}" ]; then
+        POSTGRES_PASSWORD="$(generate_hex 24)"
+      fi
+
+      if [ "${REDIS_PASSWORD:-AUTO_GENERATE}" = "AUTO_GENERATE" ] || [ -z "${REDIS_PASSWORD:-}" ]; then
+        REDIS_PASSWORD="$(generate_hex 24)"
+      fi
+
+      DATABASE_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@glitchtip-postgres:5432/${POSTGRES_DB}"
+      VALKEY_URL="redis://:${REDIS_PASSWORD}@glitchtip-redis:6379/0"
+
+      echo "Writing normalized /root/glitchtip-demo.env..."
+      cat > /root/glitchtip-demo.env <<EOF_ENV
+      GLITCHTIP_PUBLIC_URL="${GLITCHTIP_PUBLIC_URL}"
+      GLITCHTIP_PORT=${GLITCHTIP_PORT}
+      GLITCHTIP_IMAGE=${GLITCHTIP_IMAGE}
+
+      GLITCHTIP_ADMIN_EMAIL=${GLITCHTIP_ADMIN_EMAIL}
+      GLITCHTIP_ADMIN_PASSWORD=${GLITCHTIP_ADMIN_PASSWORD}
+      GLITCHTIP_ADMIN_USERNAME=${GLITCHTIP_ADMIN_USERNAME}
+
+      GLITCHTIP_ORG_NAME="${GLITCHTIP_ORG_NAME}"
+      GLITCHTIP_TEAM_NAME="${GLITCHTIP_TEAM_NAME}"
+      GLITCHTIP_PROJECT_NAME="${GLITCHTIP_PROJECT_NAME}"
+
+      GLITCHTIP_SECRET_KEY=${GLITCHTIP_SECRET_KEY}
+
+      POSTGRES_DB=${POSTGRES_DB}
+      POSTGRES_USER=${POSTGRES_USER}
+      POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+
+      REDIS_PASSWORD=${REDIS_PASSWORD}
+
+      EMAIL_URL=${EMAIL_URL}
+      DEFAULT_FROM_EMAIL=${DEFAULT_FROM_EMAIL}
+
+      ENABLE_USER_REGISTRATION=${ENABLE_USER_REGISTRATION}
+      ENABLE_ORGANIZATION_CREATION=${ENABLE_ORGANIZATION_CREATION}
+
+      GLITCHTIP_ENABLE_UPTIME=${GLITCHTIP_ENABLE_UPTIME}
+      GLITCHTIP_ENABLE_LOGS=${GLITCHTIP_ENABLE_LOGS}
+      GLITCHTIP_ENABLE_MCP=${GLITCHTIP_ENABLE_MCP}
+      GLITCHTIP_INSTANCE_NAME="${GLITCHTIP_INSTANCE_NAME}"
+
+      GLITCHTIP_RESET_CONTAINERS_ON_BOOT=${GLITCHTIP_RESET_CONTAINERS_ON_BOOT}
+      EOF_ENV
+      chmod 600 /root/glitchtip-demo.env
+
+      echo "Writing /opt/glitchtip/.env..."
+      cat > /opt/glitchtip/.env <<EOF_APP_ENV
+      SECRET_KEY=${GLITCHTIP_SECRET_KEY}
+      DATABASE_URL=${DATABASE_URL}
+      VALKEY_URL=${VALKEY_URL}
+      REDIS_URL=${VALKEY_URL}
+      CACHE_URL=${VALKEY_URL}
+
+      EMAIL_URL=${EMAIL_URL}
+      DEFAULT_FROM_EMAIL=${DEFAULT_FROM_EMAIL}
+
+      GLITCHTIP_DOMAIN=${GLITCHTIP_PUBLIC_URL}
+      ALLOWED_HOSTS=${GLITCHTIP_HOST},localhost,127.0.0.1,*
+      PORT=8000
+
+      ENABLE_USER_REGISTRATION=${ENABLE_USER_REGISTRATION}
+      ENABLE_SOCIAL_APPS_USER_REGISTRATION=${ENABLE_USER_REGISTRATION}
+      ENABLE_ORGANIZATION_CREATION=${ENABLE_ORGANIZATION_CREATION}
+
+      GLITCHTIP_ENABLE_UPTIME=${GLITCHTIP_ENABLE_UPTIME}
+      GLITCHTIP_ENABLE_LOGS=${GLITCHTIP_ENABLE_LOGS}
+      GLITCHTIP_ENABLE_MCP=${GLITCHTIP_ENABLE_MCP}
+      GLITCHTIP_INSTANCE_NAME=${GLITCHTIP_INSTANCE_NAME}
+
+      CELERY_WORKER_AUTOSCALE=1,3
+      CELERY_WORKER_MAX_TASKS_PER_CHILD=10000
+
+      I_PAID_FOR_GLITCHTIP=false
+      EOF_APP_ENV
+      chmod 600 /opt/glitchtip/.env
+
+      echo "Writing podman-compose.yml..."
+      cat > /opt/glitchtip/podman-compose.yml <<'EOF_COMPOSE'
+      version: "3.8"
+
+      services:
+        glitchtip-postgres:
+          image: docker.io/library/postgres:16-alpine
+          container_name: glitchtip-postgres
+          restart: unless-stopped
+          environment:
+            POSTGRES_DB: ${POSTGRES_DB}
+            POSTGRES_USER: ${POSTGRES_USER}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+          volumes:
+            - glitchtip_postgres_data:/var/lib/postgresql/data
+          healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+            interval: 10s
+            timeout: 5s
+            retries: 30
+
+        glitchtip-redis:
+          image: docker.io/library/redis:7-alpine
+          container_name: glitchtip-redis
+          restart: unless-stopped
+          command:
+            - redis-server
+            - --appendonly
+            - "yes"
+            - --requirepass
+            - ${REDIS_PASSWORD}
+          volumes:
+            - glitchtip_redis_data:/data
+          healthcheck:
+            test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+            interval: 10s
+            timeout: 5s
+            retries: 30
+
+        glitchtip:
+          image: ${GLITCHTIP_IMAGE}
+          container_name: glitchtip
+          restart: unless-stopped
+          depends_on:
+            - glitchtip-postgres
+            - glitchtip-redis
+          env_file:
+            - /opt/glitchtip/.env
+          ports:
+            - "${GLITCHTIP_PORT}:8000"
+          volumes:
+            - glitchtip_uploads:/code/uploads
+
+      volumes:
+        glitchtip_postgres_data:
+        glitchtip_redis_data:
+        glitchtip_uploads:
+      EOF_COMPOSE
+
+      echo "Writing compose environment file..."
+      cat > /opt/glitchtip/compose.env <<EOF_COMPOSE_ENV
+      GLITCHTIP_IMAGE=${GLITCHTIP_IMAGE}
+      GLITCHTIP_PORT=${GLITCHTIP_PORT}
+      POSTGRES_DB=${POSTGRES_DB}
+      POSTGRES_USER=${POSTGRES_USER}
+      POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      REDIS_PASSWORD=${REDIS_PASSWORD}
+      EOF_COMPOSE_ENV
+      chmod 600 /opt/glitchtip/compose.env
+
+      if [ "${GLITCHTIP_RESET_CONTAINERS_ON_BOOT}" = "true" ]; then
+        echo "Cleaning old GlitchTip containers..."
+        podman ps -a --format "{{.Names}}" | grep -E "^glitchtip" | xargs -r podman kill || true
+
+        for name in glitchtip glitchtip-postgres glitchtip-redis; do
+          podman rm -f "$name" 2>/dev/null || true
+        done
+
+        podman ps -a --format "{{.Names}}" | grep -E "^glitchtip" | xargs -r podman rm -f || true
+      fi
+
+      echo "Freeing GlitchTip port..."
+      fuser -k "${GLITCHTIP_PORT}/tcp" 2>/dev/null || true
+
+      echo "Pulling images..."
+      cd "$APP_DIR"
+      for i in $(seq 1 5); do
+        podman-compose --env-file /opt/glitchtip/compose.env -f /opt/glitchtip/podman-compose.yml pull && break
+        echo "Pull failed, retrying in 30s..."
+        sleep 30
+      done
+
+      echo "Starting GlitchTip stack..."
+      for i in $(seq 1 5); do
+        podman-compose --env-file /opt/glitchtip/compose.env -f /opt/glitchtip/podman-compose.yml up -d && break
+        echo "Start failed, retrying in 30s..."
+        sleep 30
+      done
+
+      echo "Creating systemd service..."
+      cat > /etc/systemd/system/glitchtip.service <<EOF_SERVICE
+      [Unit]
+      Description=GlitchTip error tracking stack on Podman
+      Requires=network-online.target podman.socket
+      After=network-online.target podman.socket
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      WorkingDirectory=${APP_DIR}
+      ExecStart=/usr/bin/podman-compose --env-file /opt/glitchtip/compose.env -f /opt/glitchtip/podman-compose.yml up -d
+      ExecStop=/usr/bin/podman-compose --env-file /opt/glitchtip/compose.env -f /opt/glitchtip/podman-compose.yml down
+      TimeoutStartSec=0
+
+      [Install]
+      WantedBy=multi-user.target
+      EOF_SERVICE
+
+      systemctl daemon-reload
+      systemctl enable glitchtip.service
+
+      echo "Waiting for Postgres..."
+      for i in $(seq 1 90); do
+        if podman exec glitchtip-postgres pg_isready -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" >/dev/null 2>&1; then
+          echo "Postgres is ready."
+          break
+        fi
+
+        echo "Waiting for Postgres... attempt $i/90"
+        sleep 3
+      done
+
+      echo "Waiting for GlitchTip container..."
+      for i in $(seq 1 90); do
+        if podman ps --format "{{.Names}}" | grep -qx "glitchtip"; then
+          echo "GlitchTip container exists."
+          break
+        fi
+
+        echo "Waiting for GlitchTip container... attempt $i/90"
+        sleep 3
+      done
+
+      echo "Running GlitchTip migrations..."
+      for i in $(seq 1 10); do
+        if podman exec glitchtip python manage.py migrate --noinput; then
+          echo "Migrations completed."
+          break
+        fi
+
+        echo "Migration failed/waiting... attempt $i/10"
+        sleep 10
+      done
+
+      echo "Creating admin user..."
+      cat > /root/glitchtip-create-admin.py <<'EOF_ADMIN_PY'
+      import os
+      from django.contrib.auth import get_user_model
+
+      User = get_user_model()
+
+      email = os.environ["GLITCHTIP_ADMIN_EMAIL"]
+      username = os.environ.get("GLITCHTIP_ADMIN_USERNAME", "admin")
+      password = os.environ["GLITCHTIP_ADMIN_PASSWORD"]
+
+      user = User.objects.filter(email=email).first()
+
+      if user:
+          user.is_staff = True
+          user.is_superuser = True
+          user.set_password(password)
+          if hasattr(user, "username"):
+              user.username = username
+          user.save()
+          print(f"Updated admin user: {email}")
+      else:
+          kwargs = {"email": email, "password": password}
+          if "username" in [field.name for field in User._meta.fields]:
+              kwargs["username"] = username
+          User.objects.create_superuser(**kwargs)
+          print(f"Created admin user: {email}")
+      EOF_ADMIN_PY
+
+      ADMIN_CREATED=false
+
+      podman cp /root/glitchtip-create-admin.py glitchtip:/tmp/glitchtip-create-admin.py
+
+      for i in $(seq 1 30); do
+        if podman exec \
+          -e GLITCHTIP_ADMIN_EMAIL="${GLITCHTIP_ADMIN_EMAIL}" \
+          -e GLITCHTIP_ADMIN_USERNAME="${GLITCHTIP_ADMIN_USERNAME}" \
+          -e GLITCHTIP_ADMIN_PASSWORD="${GLITCHTIP_ADMIN_PASSWORD}" \
+          glitchtip \
+          python manage.py shell -c "exec(open('/tmp/glitchtip-create-admin.py').read())"; then
+          ADMIN_CREATED=true
+          break
+        fi
+
+        echo "Admin creation failed/waiting... attempt $i/30"
+        sleep 5
+      done
+
+      echo "Creating organization/team/project..."
+      cat > /root/glitchtip-create-org-project.py <<'EOF_ORG_PY'
+      import os
+      from django.apps import apps
+      from django.contrib.auth import get_user_model
+      from django.utils.text import slugify
+
+      User = get_user_model()
+
+      email = os.environ["GLITCHTIP_ADMIN_EMAIL"]
+      org_name = os.environ.get("GLITCHTIP_ORG_NAME", "redu.cloud")
+      team_name = os.environ.get("GLITCHTIP_TEAM_NAME", "Default Team")
+      project_name = os.environ.get("GLITCHTIP_PROJECT_NAME", "AI OS Demo")
+
+      user = User.objects.get(email=email)
+
+      Organization = apps.get_model("organizations_ext", "Organization")
+      OrganizationUser = apps.get_model("organizations_ext", "OrganizationUser")
+      OrganizationOwner = apps.get_model("organizations_ext", "OrganizationOwner")
+      Team = apps.get_model("teams", "Team")
+      Project = apps.get_model("projects", "Project")
+
+      org_slug = slugify(org_name)
+      team_slug = slugify(team_name)
+      project_slug = slugify(project_name)
+
+      def fields(model):
+          return {f.name for f in model._meta.fields}
+
+      def get_role_value():
+          try:
+              role_field = OrganizationUser._meta.get_field("role")
+              choices = list(role_field.choices or [])
+              if choices:
+                  values = [value for value, label in choices if isinstance(value, int)]
+                  if values:
+                      return max(values)
+          except Exception:
+              pass
+          return 100
+
+      org_fields = fields(Organization)
+      org_lookup = {"slug": org_slug} if "slug" in org_fields else {"name": org_name}
+
+      org = Organization.objects.filter(**org_lookup).first()
+      if not org:
+          data = {}
+          if "name" in org_fields:
+              data["name"] = org_name
+          if "slug" in org_fields:
+              data["slug"] = org_slug
+          org = Organization.objects.create(**data)
+          print("Created organization:", org)
+      else:
+          print("Organization exists:", org)
+
+      ou_fields = fields(OrganizationUser)
+      ou_lookup = {}
+
+      if "organization" in ou_fields:
+          ou_lookup["organization"] = org
+      if "user" in ou_fields:
+          ou_lookup["user"] = user
+
+      org_user = OrganizationUser.objects.filter(**ou_lookup).first()
+      if not org_user:
+          data = dict(ou_lookup)
+          if "role" in ou_fields:
+              data["role"] = get_role_value()
+          org_user = OrganizationUser.objects.create(**data)
+          print("Created organization user:", org_user)
+      else:
+          if "role" in ou_fields:
+              org_user.role = get_role_value()
+              org_user.save()
+          print("Organization user exists/updated:", org_user)
+
+      oo_fields = fields(OrganizationOwner)
+      oo_lookup = {}
+
+      if "organization" in oo_fields:
+          oo_lookup["organization"] = org
+      if "organization_user" in oo_fields:
+          oo_lookup["organization_user"] = org_user
+
+      if oo_lookup:
+          org_owner = OrganizationOwner.objects.filter(**oo_lookup).first()
+          if not org_owner:
+              OrganizationOwner.objects.create(**oo_lookup)
+              print("Created organization owner")
+          else:
+              print("Organization owner exists")
+
+      team_fields = fields(Team)
+      team_lookup = {"slug": team_slug} if "slug" in team_fields else {"name": team_name}
+      team_data = {}
+
+      if "name" in team_fields:
+          team_data["name"] = team_name
+      if "slug" in team_fields:
+          team_data["slug"] = team_slug
+      if "organization" in team_fields:
+          team_lookup["organization"] = org
+          team_data["organization"] = org
+
+      team = Team.objects.filter(**team_lookup).first()
+      if not team:
+          team = Team.objects.create(**team_data)
+          print("Created team:", team)
+      else:
+          print("Team exists:", team)
+
+      project_fields = fields(Project)
+      project_lookup = {"slug": project_slug} if "slug" in project_fields else {"name": project_name}
+      project_data = {}
+
+      if "name" in project_fields:
+          project_data["name"] = project_name
+      if "slug" in project_fields:
+          project_data["slug"] = project_slug
+      if "organization" in project_fields:
+          project_lookup["organization"] = org
+          project_data["organization"] = org
+      if "team" in project_fields:
+          project_data["team"] = team
+      if "platform" in project_fields:
+          project_data["platform"] = "python"
+
+      project = Project.objects.filter(**project_lookup).first()
+      if not project:
+          project = Project.objects.create(**project_data)
+          print("Created project:", project)
+      else:
+          print("Project exists:", project)
+
+      rel = getattr(team, "projects", None)
+      if rel and hasattr(rel, "add"):
+          rel.add(project)
+          print("Added project to team")
+
+      print("Done.")
+      EOF_ORG_PY
+
+      ORG_PROJECT_CREATED=false
+
+      podman cp /root/glitchtip-create-org-project.py glitchtip:/tmp/glitchtip-create-org-project.py
+
+      for i in $(seq 1 30); do
+        if podman exec \
+          -e GLITCHTIP_ADMIN_EMAIL="${GLITCHTIP_ADMIN_EMAIL}" \
+          -e GLITCHTIP_ORG_NAME="${GLITCHTIP_ORG_NAME}" \
+          -e GLITCHTIP_TEAM_NAME="${GLITCHTIP_TEAM_NAME}" \
+          -e GLITCHTIP_PROJECT_NAME="${GLITCHTIP_PROJECT_NAME}" \
+          glitchtip \
+          python manage.py shell -c "exec(open('/tmp/glitchtip-create-org-project.py').read())"; then
+          ORG_PROJECT_CREATED=true
+          break
+        fi
+
+        echo "Org/project creation failed/waiting... attempt $i/30"
+        sleep 5
+      done
+
+      echo "Restarting GlitchTip..."
+      podman restart glitchtip || true
+
+      echo "Waiting for GlitchTip web to respond..."
+      for i in $(seq 1 180); do
+        if curl -fsS "http://127.0.0.1:${GLITCHTIP_PORT}" >/dev/null 2>&1; then
+          echo "GlitchTip web is responding."
+          break
+        fi
+
+        echo "Waiting for GlitchTip... attempt $i/180"
+        sleep 5
+      done
+
+      echo "Writing helper scripts..."
+
+      cat > /root/glitchtip-status.sh <<'EOF_STATUS'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/glitchtip-demo.env
+
+      echo "Containers:"
+      podman ps -a --filter "name=glitchtip"
+
+      echo
+      echo "URL:"
+      echo "  ${GLITCHTIP_PUBLIC_URL}"
+
+      echo
+      echo "HTTP test:"
+      curl -I "http://127.0.0.1:${GLITCHTIP_PORT}" || true
+
+      echo
+      echo "Admin:"
+      echo "  ${GLITCHTIP_ADMIN_EMAIL}"
+
+      echo
+      echo "Organization/team/project:"
+      echo "  ${GLITCHTIP_ORG_NAME}"
+      echo "  ${GLITCHTIP_TEAM_NAME}"
+      echo "  ${GLITCHTIP_PROJECT_NAME}"
+
+      echo
+      echo "Recent logs:"
+      podman logs --tail=120 glitchtip || true
+
+      echo
+      echo "Postgres logs:"
+      podman logs --tail=80 glitchtip-postgres || true
+
+      echo
+      echo "Redis logs:"
+      podman logs --tail=80 glitchtip-redis || true
+      EOF_STATUS
+
+      chmod +x /root/glitchtip-status.sh
+
+      cat > /root/glitchtip-keys.sh <<'EOF_KEYS'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/glitchtip-demo.env
+
+      echo "GLITCHTIP_URL=${GLITCHTIP_PUBLIC_URL}"
+      echo "GLITCHTIP_ADMIN_EMAIL=${GLITCHTIP_ADMIN_EMAIL}"
+      echo "GLITCHTIP_ADMIN_PASSWORD=${GLITCHTIP_ADMIN_PASSWORD}"
+      echo "GLITCHTIP_ORG_NAME=${GLITCHTIP_ORG_NAME}"
+      echo "GLITCHTIP_TEAM_NAME=${GLITCHTIP_TEAM_NAME}"
+      echo "GLITCHTIP_PROJECT_NAME=${GLITCHTIP_PROJECT_NAME}"
+      echo "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}"
+      echo "REDIS_PASSWORD=${REDIS_PASSWORD}"
+      EOF_KEYS
+
+      chmod +x /root/glitchtip-keys.sh
+
+      cat > /root/glitchtip-create-admin.sh <<'EOF_CREATE_ADMIN'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/glitchtip-demo.env
+
+      podman cp /root/glitchtip-create-admin.py glitchtip:/tmp/glitchtip-create-admin.py
+
+      podman exec \
+        -e GLITCHTIP_ADMIN_EMAIL="${GLITCHTIP_ADMIN_EMAIL}" \
+        -e GLITCHTIP_ADMIN_USERNAME="${GLITCHTIP_ADMIN_USERNAME}" \
+        -e GLITCHTIP_ADMIN_PASSWORD="${GLITCHTIP_ADMIN_PASSWORD}" \
+        glitchtip \
+        python manage.py shell -c "exec(open('/tmp/glitchtip-create-admin.py').read())"
+      EOF_CREATE_ADMIN
+
+      chmod +x /root/glitchtip-create-admin.sh
+
+      cat > /root/glitchtip-create-org-project.sh <<'EOF_CREATE_ORG'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/glitchtip-demo.env
+
+      podman cp /root/glitchtip-create-org-project.py glitchtip:/tmp/glitchtip-create-org-project.py
+
+      podman exec \
+        -e GLITCHTIP_ADMIN_EMAIL="${GLITCHTIP_ADMIN_EMAIL}" \
+        -e GLITCHTIP_ORG_NAME="${GLITCHTIP_ORG_NAME}" \
+        -e GLITCHTIP_TEAM_NAME="${GLITCHTIP_TEAM_NAME}" \
+        -e GLITCHTIP_PROJECT_NAME="${GLITCHTIP_PROJECT_NAME}" \
+        glitchtip \
+        python manage.py shell -c "exec(open('/tmp/glitchtip-create-org-project.py').read())"
+      EOF_CREATE_ORG
+
+      chmod +x /root/glitchtip-create-org-project.sh
+
+      cat > /root/glitchtip-test-sentry-info.sh <<'EOF_TEST'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/glitchtip-demo.env
+
+      cat <<MSG
+      GlitchTip uses Sentry-compatible SDKs.
+
+      To test from a real app:
+        1. Login to GlitchTip
+        2. Open organization/project:
+             ${GLITCHTIP_ORG_NAME} / ${GLITCHTIP_PROJECT_NAME}
+        3. Copy the DSN
+        4. Use the normal Sentry SDK for your language/framework
+
+      UI:
+        ${GLITCHTIP_PUBLIC_URL}
+      MSG
+      EOF_TEST
+
+      chmod +x /root/glitchtip-test-sentry-info.sh
+
+      cat > /root/GLITCHTIP_README.txt <<EOF_README
+      redu.cloud GlitchTip template
+
+      UI:
+        ${GLITCHTIP_PUBLIC_URL}
+
+      Admin:
+        Email:    ${GLITCHTIP_ADMIN_EMAIL}
+        Password: ${GLITCHTIP_ADMIN_PASSWORD}
+
+      Admin auto-created:
+        ${ADMIN_CREATED}
+
+      Organization/team/project auto-created:
+        ${ORG_PROJECT_CREATED}
+
+      Organization:
+        ${GLITCHTIP_ORG_NAME}
+
+      Team:
+        ${GLITCHTIP_TEAM_NAME}
+
+      Project:
+        ${GLITCHTIP_PROJECT_NAME}
+
+      Status:
+        /root/glitchtip-status.sh
+
+      Keys:
+        /root/glitchtip-keys.sh
+
+      Create/update admin:
+        /root/glitchtip-create-admin.sh
+
+      Create/update organization/project:
+        /root/glitchtip-create-org-project.sh
+
+      Sentry SDK test info:
+        /root/glitchtip-test-sentry-info.sh
+
+      App directory:
+        /opt/glitchtip
+
+      Env files:
+        /root/glitchtip-demo.env
+        /opt/glitchtip/.env
+        /opt/glitchtip/compose.env
+
+      Logs:
+        /var/log/glitchtip-bootstrap.log
+        podman logs glitchtip
+
+      Useful commands:
+        cd /opt/glitchtip && podman-compose --env-file compose.env -f podman-compose.yml ps
+        cd /opt/glitchtip && podman-compose --env-file compose.env -f podman-compose.yml logs -f
+        systemctl restart glitchtip
+
+      AI OS positioning:
+        GlitchTip gives the startup stack:
+          - application error tracking
+          - Sentry-compatible SDK ingestion
+          - uptime monitoring
+          - release/debug visibility
+          - production feedback loops for AI-assisted debugging
+
+      Production notes:
+        Configure:
+          - real domain + HTTPS proxy
+          - SMTP email URL
+          - backups for PostgreSQL
+          - object/S3 storage if you use large sourcemaps/uploads
+          - stricter ALLOWED_HOSTS
+      EOF_README
+
+      echo "========================================"
+      echo " GlitchTip deployment finished"
+      echo " UI: ${GLITCHTIP_PUBLIC_URL}"
+      echo " README: /root/GLITCHTIP_README.txt"
+      echo " Status: /root/glitchtip-status.sh"
+      echo " Keys: /root/glitchtip-keys.sh"
+      echo " Logs: ${LOG_FILE}"
+      echo "========================================"
+
+runcmd:
+  - [ bash, -lc, "/usr/local/bin/glitchtip_bootstrap.sh > /var/log/glitchtip-bootstrap-runcmd.log 2>&1" ]

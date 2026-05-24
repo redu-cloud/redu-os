@@ -1,4 +1,6 @@
 node_modules/
+.env
+.local/
 .next/
 out/
 .env.local
@@ -13,3 +15,4 @@ out/
 .git/
 dist/
 build/
+public/

@@ -1,14 +1,51 @@
-version: "3.9"
+version: "3.8"
 
 services:
-  reduos:
+  ollama:
+    image: docker.io/ollama/ollama:latest
+    container_name: redu-os-ollama
+    restart: unless-stopped
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    ports:
+      - "${OLLAMA_PORT:-11435}:11434"
+    volumes:
+      - ./.local/ollama:/root/.ollama
+
+  qdrant:
+    image: docker.io/qdrant/qdrant:latest
+    container_name: redu-os-qdrant
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - ./.local/qdrant:/qdrant/storage
+
+  collector:
     build:
       context: .
-      dockerfile: Dockerfile
-    image: localhost/redu-os:latest
-    container_name: reduos
-    ports:
-      - "3000:3000"
-    env_file:
-      - .env.local
+      dockerfile: Containerfile
+    image: localhost/redu-os-collector:latest
+    container_name: redu-os-collector
     restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      SUPABASE_URL: http://host.containers.internal:8000
+      AI_ENABLED: "true"
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: deepseek-r1:1.5b
+      OLLAMA_EMBED_MODEL: nomic-embed-text
+      QDRANT_ENABLED: "true"
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_FALLBACK_EMBEDDINGS: "true"
+    depends_on:
+      - ollama
+      - qdrant
+    ports:
+      - "3005:3005"

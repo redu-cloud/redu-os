@@ -1,0 +1,338 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+  - podman
+  - podman-compose
+  - uidmap
+  - curl
+  - nodejs
+  - npm
+  - python3
+
+write_files:
+  - path: /root/listmonk-demo.env
+    permissions: "0600"
+    owner: root:root
+    content: |
+      TELEGRAM_BOT_TOKEN=PASTE_TELEGRAM_BOT_TOKEN_HERE
+      TELEGRAM_CHAT_ID=PASTE_TELEGRAM_CHAT_ID_HERE
+
+      WAITLIST_API_KEY=YOUR_API_KEY_HERE
+
+      LISTMONK_ADMIN_USERNAME=admin
+      LISTMONK_ADMIN_PASSWORD=ChangeMeStrong123
+      LISTMONK_DB_PASSWORD=ChangeMeListmonkDB123
+
+  - path: /etc/containers/registries.conf
+    permissions: "0644"
+    owner: root:root
+    content: |
+      unqualified-search-registries = ["docker.io"]
+
+      [[registry]]
+      prefix = "docker.io"
+      location = "docker.io"
+
+  - path: /opt/listmonk/podman-compose.yml
+    permissions: "0644"
+    owner: root:root
+    content: |
+      version: "3.8"
+
+      services:
+        listmonkdb:
+          image: docker.io/postgres:16-alpine
+          container_name: listmonk-db
+          restart: unless-stopped
+          environment:
+            POSTGRES_DB: listmonk
+            POSTGRES_USER: listmonk
+            POSTGRES_PASSWORD: ChangeMeListmonkDB123
+          volumes:
+            - listmonk_db_data:/var/lib/postgresql/data
+          healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U listmonk -d listmonk"]
+            interval: 10s
+            timeout: 5s
+            retries: 30
+
+        listmonk:
+          image: docker.io/listmonk/listmonk:latest
+          container_name: listmonk
+          restart: unless-stopped
+          depends_on:
+            - listmonkdb
+          environment:
+            LISTMONK_ADMIN_USER: admin
+            LISTMONK_ADMIN_PASSWORD: ChangeMeStrong123
+          ports:
+            - "9000:9000"
+          volumes:
+            - listmonk_data:/listmonk
+            - /opt/listmonk/config.toml:/listmonk/config.toml:ro
+          command: >
+            sh -c "./listmonk --config /listmonk/config.toml"
+
+      volumes:
+        listmonk_db_data:
+        listmonk_data:
+
+  - path: /opt/listmonk/config.toml
+    permissions: "0644"
+    owner: root:root
+    content: |
+      [app]
+      address = "0.0.0.0:9000"
+      admin_username = "admin"
+      admin_password = "ChangeMeStrong123"
+
+      [db]
+      host = "listmonkdb"
+      port = 5432
+      user = "listmonk"
+      password = "ChangeMeListmonkDB123"
+      database = "listmonk"
+      ssl_mode = "disable"
+      max_open = 25
+      max_idle = 25
+      max_lifetime = "300s"
+
+  - path: /usr/local/bin/listmonk_bootstrap.sh
+    permissions: "0755"
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/listmonk-demo.env
+
+      cd /opt/listmonk
+
+      sed -i "s/ChangeMeListmonkDB123/${LISTMONK_DB_PASSWORD}/g" /opt/listmonk/podman-compose.yml
+      sed -i "s/ChangeMeListmonkDB123/${LISTMONK_DB_PASSWORD}/g" /opt/listmonk/config.toml
+      sed -i "s/LISTMONK_ADMIN_USER: admin/LISTMONK_ADMIN_USER: ${LISTMONK_ADMIN_USERNAME}/g" /opt/listmonk/podman-compose.yml
+      sed -i "s/LISTMONK_ADMIN_PASSWORD: ChangeMeStrong123/LISTMONK_ADMIN_PASSWORD: ${LISTMONK_ADMIN_PASSWORD}/g" /opt/listmonk/podman-compose.yml
+      sed -i "s/admin_username = \"admin\"/admin_username = \"${LISTMONK_ADMIN_USERNAME}\"/g" /opt/listmonk/config.toml
+      sed -i "s/admin_password = \"ChangeMeStrong123\"/admin_password = \"${LISTMONK_ADMIN_PASSWORD}\"/g" /opt/listmonk/config.toml
+
+      for i in $(seq 1 5); do
+        /usr/bin/podman-compose pull && break
+        echo "Pull failed, retrying in 30s..."
+        sleep 30
+      done
+
+      echo "[1/7] Starting Postgres..."
+      /usr/bin/podman-compose up -d listmonkdb
+
+      echo "[2/7] Waiting for Postgres..."
+      for i in {1..36}; do
+        status="$(/usr/bin/podman inspect -f '{{.State.Health.Status}}' listmonk-db 2>/dev/null || true)"
+        echo "Postgres status: ${status:-unknown}"
+        if [[ "$status" == "healthy" ]]; then
+          break
+        fi
+        sleep 5
+      done
+
+      status="$(/usr/bin/podman inspect -f '{{.State.Health.Status}}' listmonk-db 2>/dev/null || true)"
+      if [[ "$status" != "healthy" ]]; then
+        echo "ERROR: Postgres did not become healthy."
+        /usr/bin/podman logs --tail 200 listmonk-db || true
+        exit 1
+      fi
+
+      echo "[3/7] Installing Listmonk DB with admin user..."
+      if [[ ! -f /opt/listmonk/.installed ]]; then
+        /usr/bin/podman run --rm --net listmonk_default \
+          -e LISTMONK_ADMIN_USER="${LISTMONK_ADMIN_USERNAME}" \
+          -e LISTMONK_ADMIN_PASSWORD="${LISTMONK_ADMIN_PASSWORD}" \
+          -v /opt/listmonk/config.toml:/listmonk/config.toml:ro \
+          -v listmonk_listmonk_data:/listmonk \
+          docker.io/listmonk/listmonk:latest \
+          sh -c './listmonk --install --yes --config /listmonk/config.toml'
+
+        touch /opt/listmonk/.installed
+      fi
+
+      echo "[4/7] Starting Listmonk..."
+      /usr/bin/podman-compose up -d listmonk
+
+      echo "[5/7] Waiting for Listmonk..."
+      for i in {1..36}; do
+        if curl -fsS "http://127.0.0.1:9000" >/dev/null 2>&1; then
+          break
+        fi
+        sleep 5
+      done
+
+      echo "[6/7] Creating Beta Users public list..."
+      LIST_CREATE_RESPONSE="$(curl -s -X POST "http://127.0.0.1:9000/api/lists" \
+        -u "${LISTMONK_ADMIN_USERNAME}:${LISTMONK_ADMIN_PASSWORD}" \
+        -H "Content-Type: application/json" \
+        -d '{
+          "name": "Beta Users",
+          "type": "public",
+          "optin": "single",
+          "tags": ["waitlist"]
+        }')"
+
+      echo "${LIST_CREATE_RESPONSE}" > /root/listmonk-list-create-response.json
+
+      WAITLIST_LIST_UUID="$(python3 - <<'PY'
+      import json
+      from pathlib import Path
+      data = json.loads(Path("/root/listmonk-list-create-response.json").read_text())
+      print(data["data"]["uuid"])
+      PY
+      )"
+
+      echo "WAITLIST_LIST_UUID=${WAITLIST_LIST_UUID}" > /root/listmonk-list.env
+
+      echo "[7/7] Creating bridge API..."
+      mkdir -p /opt/listmonk-waitlist-bridge
+      cd /opt/listmonk-waitlist-bridge
+
+      cat > package.json <<'EOF'
+      {
+        "scripts": {
+          "start": "node server.js"
+        },
+        "dependencies": {
+          "express": "^4.18.3"
+        }
+      }
+      EOF
+
+      npm install
+
+      cat > server.js <<'EOF'
+      const express = require("express");
+
+      const app = express();
+      app.use(express.json());
+
+      const {
+        LISTMONK_URL,
+        TELEGRAM_BOT_TOKEN,
+        TELEGRAM_CHAT_ID,
+        WAITLIST_API_KEY,
+        WAITLIST_LIST_UUID
+      } = process.env;
+
+      app.get("/", (req, res) => {
+        res.json({
+          ok: true,
+          service: "Listmonk Waitlist Telegram Bridge",
+          endpoint: "POST /api/signup"
+        });
+      });
+
+      app.post("/api/signup", async (req, res) => {
+        try {
+          if (req.headers["x-api-key"] !== WAITLIST_API_KEY) {
+            return res.status(401).json({ ok: false, error: "Invalid API key" });
+          }
+
+          const email = req.body.email;
+          const name = req.body.name || "";
+          const company = req.body.company || "";
+          const source = req.body.source || "api";
+
+          if (!email) {
+            return res.status(400).json({ ok: false, error: "email is required" });
+          }
+
+          const form = new URLSearchParams();
+          form.append("email", email);
+          form.append("name", name);
+          form.append("l", WAITLIST_LIST_UUID);
+
+          const subResp = await fetch(`${LISTMONK_URL}/subscription/form`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded"
+            },
+            body: form.toString()
+          });
+
+          const subText = await subResp.text();
+
+          if (!subResp.ok || !subText.includes("Subscribed successfully")) {
+            return res.status(500).json({
+              ok: false,
+              step: "listmonk_public_subscribe",
+              status: subResp.status,
+              error: subText.slice(0, 500)
+            });
+          }
+
+          const telegramText =
+            `📝 New waitlist signup\n\n` +
+            `Name: ${name || "-"}\n` +
+            `Email: ${email}\n` +
+            `Company: ${company || "-"}\n` +
+            `Source: ${source}`;
+
+          const tgResp = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: TELEGRAM_CHAT_ID,
+              text: telegramText
+            })
+          });
+
+          const tgJson = await tgResp.json();
+
+          res.json({
+            ok: true,
+            subscribed: true,
+            telegram_sent: tgJson.ok
+          });
+        } catch (err) {
+          res.status(500).json({ ok: false, error: err.message });
+        }
+      });
+
+      app.listen(3001, "0.0.0.0", () => {
+        console.log("Waitlist bridge running on port 3001");
+      });
+      EOF
+
+      cat > /etc/systemd/system/listmonk-waitlist-bridge.service <<EOF
+      [Unit]
+      Description=Listmonk Waitlist Telegram Bridge
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      WorkingDirectory=/opt/listmonk-waitlist-bridge
+      Environment=LISTMONK_URL=http://127.0.0.1:9000
+      Environment=TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      Environment=TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      Environment=WAITLIST_API_KEY=${WAITLIST_API_KEY}
+      Environment=WAITLIST_LIST_UUID=${WAITLIST_LIST_UUID}
+      ExecStart=/usr/bin/node /opt/listmonk-waitlist-bridge/server.js
+      Restart=always
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+      EOF
+
+      systemctl daemon-reload
+      systemctl enable --now listmonk-waitlist-bridge
+
+      echo ""
+      echo "============================================================"
+      echo "Listmonk deployment completed."
+      echo "Listmonk UI: http://YOUR_VM_IP:9000"
+      echo "Bridge API:  http://YOUR_VM_IP:3001/api/signup"
+      echo "Admin user:  ${LISTMONK_ADMIN_USERNAME}"
+      echo "List UUID:   ${WAITLIST_LIST_UUID}"
+      echo "============================================================"
+
+runcmd:
+  - [ bash, -lc, "/usr/local/bin/listmonk_bootstrap.sh > /var/log/listmonk-bootstrap.log 2>&1" ]

@@ -1,0 +1,248 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+  - curl
+  - jq
+  - podman
+  - podman-compose
+
+write_files:
+  - path: /root/umami-demo.env
+    permissions: "0600"
+    content: |
+      # Public access
+      UMAMI_PUBLIC_URL="http://YOUR_SERVER_IP_OR_DOMAIN:3000"
+
+      # Umami admin
+      # Default Umami login is admin / umami
+      UMAMI_ADMIN_USERNAME="admin"
+      UMAMI_OLD_ADMIN_PASSWORD="umami"
+      UMAMI_NEW_ADMIN_PASSWORD="CHANGE_ME_ADMIN_PASSWORD"
+
+      # Website to auto-create
+      # IMPORTANT: quotes are required if value has spaces
+      UMAMI_WEBSITE_NAME="Startup Demo"
+      UMAMI_WEBSITE_DOMAIN="YOUR_SERVER_IP_OR_DOMAIN"
+
+      # PostgreSQL
+      POSTGRES_DB="umami"
+      POSTGRES_USER="umami"
+      POSTGRES_PASSWORD="CHANGE_ME_POSTGRES_PASSWORD"
+
+      # Umami app secret
+      APP_SECRET="CHANGE_ME_LONG_RANDOM_APP_SECRET"
+
+  - path: /root/podman-compose.yml
+    permissions: "0644"
+    content: |
+      version: "3.9"
+
+      services:
+        postgres:
+          image: docker.io/postgres:15-alpine
+          container_name: umami-postgres
+          restart: unless-stopped
+          environment:
+            POSTGRES_DB: ${POSTGRES_DB}
+            POSTGRES_USER: ${POSTGRES_USER}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+          volumes:
+            - umami_postgres_data:/var/lib/postgresql/data
+          healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+            interval: 5s
+            timeout: 5s
+            retries: 20
+
+        umami:
+          image: ghcr.io/umami-software/umami:postgresql-latest
+          container_name: umami
+          restart: unless-stopped
+          depends_on:
+            postgres:
+              condition: service_healthy
+          ports:
+            - "3000:3000"
+          environment:
+            DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+            DATABASE_TYPE: postgresql
+            APP_SECRET: ${APP_SECRET}
+            TRACKER_SCRIPT_NAME: script.js
+
+      volumes:
+        umami_postgres_data:
+
+  - path: /root/umami-bootstrap.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      LOG_FILE="/var/log/umami-bootstrap.log"
+      OUTPUT_FILE="/root/umami-demo-output.txt"
+      ENV_FILE="/root/umami-demo.env"
+      COMPOSE_FILE="/root/podman-compose.yml"
+
+      exec > >(tee -a "$LOG_FILE") 2>&1
+
+      echo "Starting Umami bootstrap..."
+
+      set -a
+      source "$ENV_FILE"
+      set +a
+
+      echo "Cleaning old containers if present..."
+      podman-compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down 2>/dev/null || true
+      podman rm -f umami umami-postgres 2>/dev/null || true
+
+      echo "Freeing port 3000 if needed..."
+      fuser -k 3000/tcp 2>/dev/null || true
+
+      echo "Starting Umami stack..."
+      cd /root
+      podman-compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
+
+      echo "Container status after compose up:"
+      podman ps -a || true
+
+      echo "Waiting for Umami web UI..."
+      READY=0
+
+      for i in $(seq 1 160); do
+        if curl -fsS "http://127.0.0.1:3000" >/dev/null 2>&1; then
+          READY=1
+          echo "Umami is reachable."
+          break
+        fi
+
+        if [ "$((i % 10))" -eq 0 ]; then
+          echo "Still waiting. Container status:"
+          podman ps -a || true
+          echo "Recent Umami logs:"
+          podman logs --tail=40 umami 2>/dev/null || true
+        fi
+
+        echo "Waiting for Umami... attempt $i/160"
+        sleep 3
+      done
+
+      if [ "$READY" != "1" ]; then
+        echo "Umami did not become reachable."
+        podman ps -a || true
+        podman logs --tail=150 umami 2>/dev/null || true
+        podman logs --tail=100 umami-postgres 2>/dev/null || true
+        exit 1
+      fi
+
+      echo "Waiting a little more for app initialization..."
+      sleep 15
+
+      echo "Logging into Umami with default password..."
+
+      LOGIN_RESPONSE="$(curl -sS -X POST "http://127.0.0.1:3000/api/auth/login" \
+        -H "Content-Type: application/json" \
+        -d "{\"username\":\"${UMAMI_ADMIN_USERNAME}\",\"password\":\"${UMAMI_OLD_ADMIN_PASSWORD}\"}")"
+
+      TOKEN="$(echo "$LOGIN_RESPONSE" | jq -r '.token // .authToken // empty')"
+
+      if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+        echo "Could not get auth token from Umami."
+        echo "Login response:"
+        echo "$LOGIN_RESPONSE"
+        echo "Open ${UMAMI_PUBLIC_URL} and login with admin / umami"
+        exit 0
+      fi
+
+      echo "Logged in successfully."
+
+      echo "Creating website in Umami..."
+
+      CREATE_WEBSITE_RESPONSE="$(curl -sS -X POST "http://127.0.0.1:3000/api/websites" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${TOKEN}" \
+        -d "{\"name\":\"${UMAMI_WEBSITE_NAME}\",\"domain\":\"${UMAMI_WEBSITE_DOMAIN}\"}")"
+
+      WEBSITE_ID="$(echo "$CREATE_WEBSITE_RESPONSE" | jq -r '.id // .website.id // empty')"
+      USER_ID="$(echo "$CREATE_WEBSITE_RESPONSE" | jq -r '.userId // .website.userId // empty')"
+
+      if [ -z "$WEBSITE_ID" ] || [ "$WEBSITE_ID" = "null" ]; then
+        echo "Could not create website or website may already exist."
+        echo "Create website response:"
+        echo "$CREATE_WEBSITE_RESPONSE"
+
+        echo "Trying to list existing websites..."
+        WEBSITES_RESPONSE="$(curl -sS "http://127.0.0.1:3000/api/websites" \
+          -H "Authorization: Bearer ${TOKEN}")"
+
+        WEBSITE_ID="$(echo "$WEBSITES_RESPONSE" | jq -r --arg name "$UMAMI_WEBSITE_NAME" '.data[]? | select(.name == $name) | .id' | head -n 1)"
+        USER_ID="$(echo "$WEBSITES_RESPONSE" | jq -r --arg name "$UMAMI_WEBSITE_NAME" '.data[]? | select(.name == $name) | .userId' | head -n 1)"
+
+        if [ -z "$WEBSITE_ID" ] || [ "$WEBSITE_ID" = "null" ]; then
+          WEBSITE_ID="UNKNOWN"
+        fi
+      fi
+
+      if [ -n "$USER_ID" ] && [ "$USER_ID" != "null" ]; then
+        echo "Changing admin password using POST /api/users/${USER_ID}..."
+
+        UPDATE_USER_RESPONSE="$(curl -sS -X POST "http://127.0.0.1:3000/api/users/${USER_ID}" \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer ${TOKEN}" \
+          -d "{\"username\":\"${UMAMI_ADMIN_USERNAME}\",\"password\":\"${UMAMI_NEW_ADMIN_PASSWORD}\",\"role\":\"admin\"}")"
+
+        echo "Update user response:"
+        echo "$UPDATE_USER_RESPONSE" | jq . || echo "$UPDATE_USER_RESPONSE"
+
+        echo "Testing login with new password..."
+        NEW_LOGIN_RESPONSE="$(curl -sS -X POST "http://127.0.0.1:3000/api/auth/login" \
+          -H "Content-Type: application/json" \
+          -d "{\"username\":\"${UMAMI_ADMIN_USERNAME}\",\"password\":\"${UMAMI_NEW_ADMIN_PASSWORD}\"}")"
+
+        NEW_TOKEN="$(echo "$NEW_LOGIN_RESPONSE" | jq -r '.token // .authToken // empty')"
+
+        if [ -n "$NEW_TOKEN" ] && [ "$NEW_TOKEN" != "null" ]; then
+          echo "Password update confirmed."
+        else
+          echo "Password update may have failed. New login response:"
+          echo "$NEW_LOGIN_RESPONSE"
+        fi
+      else
+        echo "Could not detect user id. Skipping password change."
+      fi
+
+      TRACKING_SNIPPET="<script defer src=\"${UMAMI_PUBLIC_URL}/script.js\" data-website-id=\"${WEBSITE_ID}\"></script>"
+
+      cat > "$OUTPUT_FILE" <<EOF
+      Umami deployment complete.
+
+      URL:
+      ${UMAMI_PUBLIC_URL}
+
+      Login:
+      Username: ${UMAMI_ADMIN_USERNAME}
+      Password: ${UMAMI_NEW_ADMIN_PASSWORD}
+
+      Website:
+      Name: ${UMAMI_WEBSITE_NAME}
+      Domain: ${UMAMI_WEBSITE_DOMAIN}
+      Website ID: ${WEBSITE_ID}
+
+      Tracking snippet:
+      ${TRACKING_SNIPPET}
+
+      Useful commands:
+      podman ps
+      podman logs -f umami
+      podman logs -f umami-postgres
+      cat /var/log/umami-bootstrap.log
+      cat /root/umami-demo-output.txt
+      EOF
+
+      cat "$OUTPUT_FILE"
+
+      echo "Umami bootstrap finished."
+
+runcmd:
+  - /root/umami-bootstrap.sh

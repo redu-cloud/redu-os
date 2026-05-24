@@ -1,0 +1,817 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+  - podman
+  - podman-compose
+  - uidmap
+  - curl
+  - jq
+  - openssl
+  - psmisc
+
+write_files:
+  - path: /root/langfuse-demo.env
+    permissions: "0600"
+    owner: root:root
+    content: |
+      # Public URL for users.
+      # Leave empty to auto-detect public IP and use http://IP:3000
+      # If you set only a domain, for example langfuse-demo.redu.cloud,
+      # cloud-init will normalize it to https://langfuse-demo.redu.cloud
+      LANGFUSE_PUBLIC_URL=
+
+      # Langfuse images
+      LANGFUSE_WEB_IMAGE=docker.io/langfuse/langfuse:3
+      LANGFUSE_WORKER_IMAGE=docker.io/langfuse/langfuse-worker:3
+
+      # Public ports
+      LANGFUSE_PORT=3000
+      LANGFUSE_WORKER_PORT=3030
+      MINIO_PUBLIC_PORT=9090
+
+      # Langfuse headless initialization
+      LANGFUSE_INIT_ORG_ID=redu-cloud-demo
+      LANGFUSE_INIT_ORG_NAME="redu.cloud Demo"
+      LANGFUSE_INIT_PROJECT_ID=ai-startup-stack
+      LANGFUSE_INIT_PROJECT_NAME="AI Startup Stack"
+      LANGFUSE_INIT_USER_EMAIL=admin@example.com
+      LANGFUSE_INIT_USER_NAME="redu.cloud Admin"
+      LANGFUSE_INIT_USER_PASSWORD='ChangeMeStrong123!'
+
+      # API keys for initialized project.
+      # Leave AUTO_GENERATE for cloud-init.
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY=AUTO_GENERATE
+      LANGFUSE_INIT_PROJECT_SECRET_KEY=AUTO_GENERATE
+
+      # Core secrets. Leave AUTO_GENERATE for cloud-init.
+      NEXTAUTH_SECRET=AUTO_GENERATE
+      SALT=AUTO_GENERATE
+      ENCRYPTION_KEY=AUTO_GENERATE
+
+      # Postgres
+      POSTGRES_DB=postgres
+      POSTGRES_USER=postgres
+      POSTGRES_PASSWORD=AUTO_GENERATE
+      POSTGRES_VERSION=17
+
+      # ClickHouse
+      CLICKHOUSE_DB=default
+      CLICKHOUSE_USER=clickhouse
+      CLICKHOUSE_PASSWORD=AUTO_GENERATE
+
+      # Redis
+      REDIS_AUTH=AUTO_GENERATE
+
+      # MinIO / S3-compatible object storage
+      MINIO_ROOT_USER=minio
+      MINIO_ROOT_PASSWORD=AUTO_GENERATE
+      LANGFUSE_S3_BUCKET=langfuse
+
+      # Optional behavior
+      TELEMETRY_ENABLED=false
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES=false
+
+      # Send one demo trace automatically after Langfuse is ready.
+      LANGFUSE_SEND_TEST_TRACE_ON_BOOT=true
+
+      # Set true only if reusing a broken test VM and you want to wipe Langfuse data.
+      LANGFUSE_RESET_DATA_ON_BOOT=false
+
+  - path: /etc/containers/registries.conf
+    permissions: "0644"
+    owner: root:root
+    content: |
+      unqualified-search-registries = ["docker.io", "cgr.dev"]
+
+      [[registry]]
+      prefix = "docker.io"
+      location = "docker.io"
+
+      [[registry]]
+      prefix = "cgr.dev"
+      location = "cgr.dev"
+
+  - path: /usr/local/bin/langfuse_bootstrap.sh
+    permissions: "0755"
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      LOG_FILE="/var/log/langfuse-bootstrap.log"
+      exec > >(tee -a "$LOG_FILE") 2>&1
+
+      echo "========================================"
+      echo " redu.cloud Langfuse bootstrap"
+      echo " Started: $(date -Is)"
+      echo "========================================"
+
+      source /root/langfuse-demo.env
+
+      APP_DIR="/opt/langfuse"
+      mkdir -p "$APP_DIR"
+
+      if [ -z "${LANGFUSE_PUBLIC_URL:-}" ]; then
+        PUBLIC_IP="$(curl -fsS --max-time 10 https://api.ipify.org || true)"
+
+        if [ -z "$PUBLIC_IP" ]; then
+          PUBLIC_IP="$(hostname -I | awk '{print $1}')"
+        fi
+
+        if [ -z "$PUBLIC_IP" ]; then
+          echo "ERROR: Could not detect public IP for LANGFUSE_PUBLIC_URL."
+          echo "Set LANGFUSE_PUBLIC_URL manually in /root/langfuse-demo.env."
+          exit 1
+        fi
+
+        LANGFUSE_PUBLIC_URL="http://${PUBLIC_IP}:${LANGFUSE_PORT}"
+      fi
+
+      # If user provides only a domain like langfuse-demo.redu.cloud,
+      # normalize it to a valid URL so NEXTAUTH_URL does not fail.
+      if ! echo "$LANGFUSE_PUBLIC_URL" | grep -Eq '^https?://'; then
+        LANGFUSE_PUBLIC_URL="https://${LANGFUSE_PUBLIC_URL}"
+      fi
+
+      if ! echo "$LANGFUSE_PUBLIC_URL" | grep -Eq '^https?://[^/ :]+(:[0-9]+)?(/.*)?$'; then
+        echo "ERROR: LANGFUSE_PUBLIC_URL is not a valid URL: ${LANGFUSE_PUBLIC_URL}"
+        exit 1
+      fi
+
+      if [ "${NEXTAUTH_SECRET:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        NEXTAUTH_SECRET="$(openssl rand -hex 32)"
+      fi
+
+      if [ "${SALT:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        SALT="$(openssl rand -hex 32)"
+      fi
+
+      if [ "${ENCRYPTION_KEY:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        ENCRYPTION_KEY="$(openssl rand -hex 32)"
+      fi
+
+      if [ "${POSTGRES_PASSWORD:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+      fi
+
+      if [ "${CLICKHOUSE_PASSWORD:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        CLICKHOUSE_PASSWORD="$(openssl rand -hex 24)"
+      fi
+
+      if [ "${REDIS_AUTH:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        REDIS_AUTH="$(openssl rand -hex 24)"
+      fi
+
+      if [ "${MINIO_ROOT_PASSWORD:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        MINIO_ROOT_PASSWORD="$(openssl rand -hex 24)"
+      fi
+
+      if [ "${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        LANGFUSE_INIT_PROJECT_PUBLIC_KEY="lf_pk_$(openssl rand -hex 24)"
+      fi
+
+      if [ "${LANGFUSE_INIT_PROJECT_SECRET_KEY:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        LANGFUSE_INIT_PROJECT_SECRET_KEY="lf_sk_$(openssl rand -hex 32)"
+      fi
+
+      echo "Writing normalized /root/langfuse-demo.env..."
+
+      cat > /root/langfuse-demo.env <<EOF
+      LANGFUSE_PUBLIC_URL=${LANGFUSE_PUBLIC_URL}
+
+      LANGFUSE_WEB_IMAGE=${LANGFUSE_WEB_IMAGE}
+      LANGFUSE_WORKER_IMAGE=${LANGFUSE_WORKER_IMAGE}
+
+      LANGFUSE_PORT=${LANGFUSE_PORT}
+      LANGFUSE_WORKER_PORT=${LANGFUSE_WORKER_PORT}
+      MINIO_PUBLIC_PORT=${MINIO_PUBLIC_PORT}
+
+      LANGFUSE_INIT_ORG_ID=${LANGFUSE_INIT_ORG_ID}
+      LANGFUSE_INIT_ORG_NAME="${LANGFUSE_INIT_ORG_NAME}"
+      LANGFUSE_INIT_PROJECT_ID=${LANGFUSE_INIT_PROJECT_ID}
+      LANGFUSE_INIT_PROJECT_NAME="${LANGFUSE_INIT_PROJECT_NAME}"
+      LANGFUSE_INIT_USER_EMAIL=${LANGFUSE_INIT_USER_EMAIL}
+      LANGFUSE_INIT_USER_NAME="${LANGFUSE_INIT_USER_NAME}"
+      LANGFUSE_INIT_USER_PASSWORD='${LANGFUSE_INIT_USER_PASSWORD}'
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY=${LANGFUSE_INIT_PROJECT_PUBLIC_KEY}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY=${LANGFUSE_INIT_PROJECT_SECRET_KEY}
+
+      NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      SALT=${SALT}
+      ENCRYPTION_KEY=${ENCRYPTION_KEY}
+
+      POSTGRES_DB=${POSTGRES_DB}
+      POSTGRES_USER=${POSTGRES_USER}
+      POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      POSTGRES_VERSION=${POSTGRES_VERSION}
+
+      CLICKHOUSE_DB=${CLICKHOUSE_DB}
+      CLICKHOUSE_USER=${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
+
+      REDIS_AUTH=${REDIS_AUTH}
+
+      MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      LANGFUSE_S3_BUCKET=${LANGFUSE_S3_BUCKET}
+
+      TELEMETRY_ENABLED=${TELEMETRY_ENABLED}
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES=${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES}
+      LANGFUSE_SEND_TEST_TRACE_ON_BOOT=${LANGFUSE_SEND_TEST_TRACE_ON_BOOT}
+
+      LANGFUSE_RESET_DATA_ON_BOOT=${LANGFUSE_RESET_DATA_ON_BOOT}
+      EOF
+
+      chmod 600 /root/langfuse-demo.env
+      source /root/langfuse-demo.env
+
+      echo "Writing /opt/langfuse/.env..."
+
+      cat > /opt/langfuse/.env <<EOF
+      LANGFUSE_PUBLIC_URL=${LANGFUSE_PUBLIC_URL}
+
+      LANGFUSE_WEB_IMAGE=${LANGFUSE_WEB_IMAGE}
+      LANGFUSE_WORKER_IMAGE=${LANGFUSE_WORKER_IMAGE}
+
+      LANGFUSE_PORT=${LANGFUSE_PORT}
+      LANGFUSE_WORKER_PORT=${LANGFUSE_WORKER_PORT}
+      MINIO_PUBLIC_PORT=${MINIO_PUBLIC_PORT}
+
+      NEXTAUTH_URL=${LANGFUSE_PUBLIC_URL}
+      NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      SALT=${SALT}
+      ENCRYPTION_KEY=${ENCRYPTION_KEY}
+
+      TELEMETRY_ENABLED=${TELEMETRY_ENABLED}
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES=${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES}
+
+      DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DIRECT_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+
+      POSTGRES_DB=${POSTGRES_DB}
+      POSTGRES_USER=${POSTGRES_USER}
+      POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      POSTGRES_VERSION=${POSTGRES_VERSION}
+
+      CLICKHOUSE_DB=${CLICKHOUSE_DB}
+      CLICKHOUSE_USER=${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_MIGRATION_URL=clickhouse://clickhouse:9000
+      CLICKHOUSE_URL=http://clickhouse:8123
+      CLICKHOUSE_CLUSTER_ENABLED=false
+
+      REDIS_HOST=redis
+      REDIS_PORT=6379
+      REDIS_AUTH=${REDIS_AUTH}
+      REDIS_TLS_ENABLED=false
+
+      MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET=${LANGFUSE_S3_BUCKET}
+      LANGFUSE_S3_EVENT_UPLOAD_REGION=auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT=http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE=true
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX=events/
+
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET=${LANGFUSE_S3_BUCKET}
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION=auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT=http://localhost:${MINIO_PUBLIC_PORT}
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE=true
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX=media/
+
+      LANGFUSE_S3_BATCH_EXPORT_ENABLED=false
+      LANGFUSE_S3_BATCH_EXPORT_BUCKET=${LANGFUSE_S3_BUCKET}
+      LANGFUSE_S3_BATCH_EXPORT_PREFIX=exports/
+      LANGFUSE_S3_BATCH_EXPORT_REGION=auto
+      LANGFUSE_S3_BATCH_EXPORT_ENDPOINT=http://minio:9000
+      LANGFUSE_S3_BATCH_EXPORT_EXTERNAL_ENDPOINT=http://localhost:${MINIO_PUBLIC_PORT}
+      LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+      LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+      LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE=true
+
+      LANGFUSE_INIT_ORG_ID=${LANGFUSE_INIT_ORG_ID}
+      LANGFUSE_INIT_ORG_NAME=${LANGFUSE_INIT_ORG_NAME}
+      LANGFUSE_INIT_PROJECT_ID=${LANGFUSE_INIT_PROJECT_ID}
+      LANGFUSE_INIT_PROJECT_NAME=${LANGFUSE_INIT_PROJECT_NAME}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY=${LANGFUSE_INIT_PROJECT_PUBLIC_KEY}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY=${LANGFUSE_INIT_PROJECT_SECRET_KEY}
+      LANGFUSE_INIT_USER_EMAIL=${LANGFUSE_INIT_USER_EMAIL}
+      LANGFUSE_INIT_USER_NAME=${LANGFUSE_INIT_USER_NAME}
+      LANGFUSE_INIT_USER_PASSWORD=${LANGFUSE_INIT_USER_PASSWORD}
+      EOF
+
+      chmod 600 /opt/langfuse/.env
+
+      echo "Writing podman-compose.yml..."
+
+      cat > /opt/langfuse/podman-compose.yml <<'EOF'
+      version: "3.8"
+
+      services:
+        postgres:
+          image: docker.io/postgres:${POSTGRES_VERSION}
+          container_name: langfuse-postgres
+          restart: unless-stopped
+          environment:
+            POSTGRES_DB: ${POSTGRES_DB}
+            POSTGRES_USER: ${POSTGRES_USER}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+            TZ: UTC
+            PGTZ: UTC
+          ports:
+            - "127.0.0.1:5432:5432"
+          volumes:
+            - langfuse_postgres_data:/var/lib/postgresql/data
+          healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+            interval: 5s
+            timeout: 5s
+            retries: 30
+            start_period: 10s
+
+        clickhouse:
+          image: docker.io/clickhouse/clickhouse-server:latest
+          container_name: langfuse-clickhouse
+          restart: unless-stopped
+          user: "101:101"
+          environment:
+            CLICKHOUSE_DB: ${CLICKHOUSE_DB}
+            CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+            CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+          ports:
+            - "127.0.0.1:8123:8123"
+            - "127.0.0.1:9000:9000"
+          volumes:
+            - langfuse_clickhouse_data:/var/lib/clickhouse
+            - langfuse_clickhouse_logs:/var/log/clickhouse-server
+          healthcheck:
+            test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]
+            interval: 5s
+            timeout: 5s
+            retries: 30
+            start_period: 10s
+
+        redis:
+          image: docker.io/redis:7
+          container_name: langfuse-redis
+          restart: unless-stopped
+          command:
+            - redis-server
+            - --requirepass
+            - ${REDIS_AUTH}
+            - --maxmemory-policy
+            - noeviction
+          ports:
+            - "127.0.0.1:6379:6379"
+          volumes:
+            - langfuse_redis_data:/data
+          healthcheck:
+            test: ["CMD-SHELL", "redis-cli -a ${REDIS_AUTH} ping | grep PONG"]
+            interval: 5s
+            timeout: 5s
+            retries: 30
+            start_period: 10s
+
+        minio:
+          image: cgr.dev/chainguard/minio:latest
+          container_name: langfuse-minio
+          restart: unless-stopped
+          entrypoint: sh
+          command:
+            - -c
+            - mkdir -p /data/${LANGFUSE_S3_EVENT_UPLOAD_BUCKET:-langfuse} && minio server --address ":9000" --console-address ":9001" /data
+          environment:
+            MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+            MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+          ports:
+            - "${MINIO_PUBLIC_PORT}:9000"
+            - "127.0.0.1:9091:9001"
+          volumes:
+            - langfuse_minio_data:/data
+          healthcheck:
+            test: ["CMD", "mc", "ready", "local"]
+            interval: 5s
+            timeout: 5s
+            retries: 30
+            start_period: 10s
+
+        langfuse-worker:
+          image: ${LANGFUSE_WORKER_IMAGE}
+          container_name: langfuse-worker
+          restart: unless-stopped
+          depends_on:
+            postgres:
+              condition: service_healthy
+            clickhouse:
+              condition: service_healthy
+            redis:
+              condition: service_healthy
+            minio:
+              condition: service_healthy
+          ports:
+            - "127.0.0.1:${LANGFUSE_WORKER_PORT}:3030"
+          env_file:
+            - /opt/langfuse/.env
+
+        langfuse-web:
+          image: ${LANGFUSE_WEB_IMAGE}
+          container_name: langfuse-web
+          restart: unless-stopped
+          depends_on:
+            postgres:
+              condition: service_healthy
+            clickhouse:
+              condition: service_healthy
+            redis:
+              condition: service_healthy
+            minio:
+              condition: service_healthy
+          ports:
+            - "${LANGFUSE_PORT}:3000"
+          env_file:
+            - /opt/langfuse/.env
+
+      volumes:
+        langfuse_postgres_data:
+        langfuse_clickhouse_data:
+        langfuse_clickhouse_logs:
+        langfuse_redis_data:
+        langfuse_minio_data:
+      EOF
+
+      echo "Stopping old service if present..."
+      systemctl stop langfuse.service 2>/dev/null || true
+
+      echo "Cleaning old containers if present..."
+      cd /opt/langfuse
+      podman-compose --env-file /opt/langfuse/.env down 2>/dev/null || true
+      podman rm -f langfuse-web langfuse-worker langfuse-postgres langfuse-clickhouse langfuse-redis langfuse-minio 2>/dev/null || true
+
+      if [ "${LANGFUSE_RESET_DATA_ON_BOOT}" = "true" ]; then
+        echo "Reset flag enabled. Removing Langfuse data volumes..."
+        podman volume rm langfuse_langfuse_postgres_data 2>/dev/null || true
+        podman volume rm langfuse_langfuse_clickhouse_data 2>/dev/null || true
+        podman volume rm langfuse_langfuse_clickhouse_logs 2>/dev/null || true
+        podman volume rm langfuse_langfuse_redis_data 2>/dev/null || true
+        podman volume rm langfuse_langfuse_minio_data 2>/dev/null || true
+      fi
+
+      echo "Freeing public ports if needed..."
+      fuser -k "${LANGFUSE_PORT}/tcp" 2>/dev/null || true
+      fuser -k "${MINIO_PUBLIC_PORT}/tcp" 2>/dev/null || true
+
+      echo "Pulling images..."
+      echo "This can take a few minutes because Langfuse v3 uses several services."
+
+      for i in $(seq 1 5); do
+        if podman-compose --env-file /opt/langfuse/.env pull; then
+          break
+        fi
+
+        echo "Pull failed, retrying in 30s..."
+        sleep 30
+      done
+
+      echo "Starting Langfuse stack..."
+
+      podman-compose --env-file /opt/langfuse/.env up -d
+
+      echo "Creating systemd service..."
+
+      cat > /etc/systemd/system/langfuse.service <<EOF
+      [Unit]
+      Description=Langfuse LLM observability stack
+      Requires=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      WorkingDirectory=/opt/langfuse
+      ExecStart=/usr/bin/podman-compose --env-file /opt/langfuse/.env up -d
+      ExecStop=/usr/bin/podman-compose --env-file /opt/langfuse/.env down
+      TimeoutStartSec=0
+
+      [Install]
+      WantedBy=multi-user.target
+      EOF
+
+      systemctl daemon-reload
+      systemctl enable langfuse.service
+
+      echo "Waiting for Langfuse readiness..."
+
+      LANGFUSE_READY=0
+
+      for i in $(seq 1 240); do
+        if curl -fsS "http://127.0.0.1:${LANGFUSE_PORT}/api/public/ready" >/dev/null 2>&1; then
+          LANGFUSE_READY=1
+          echo "Langfuse is ready."
+          break
+        fi
+
+        if [ "$((i % 10))" -eq 0 ]; then
+          echo "Still waiting. Container status:"
+          podman ps -a --filter name=langfuse || true
+
+          echo "Recent Langfuse web logs:"
+          podman logs --tail=80 langfuse-web 2>/dev/null || true
+
+          echo "Recent Langfuse worker logs:"
+          podman logs --tail=80 langfuse-worker 2>/dev/null || true
+        fi
+
+        echo "Waiting for Langfuse... attempt $i/240"
+        sleep 5
+      done
+
+      if [ "$LANGFUSE_READY" != "1" ]; then
+        echo "Langfuse did not become ready."
+        podman ps -a || true
+        podman logs --tail=200 langfuse-web 2>/dev/null || true
+        podman logs --tail=200 langfuse-worker 2>/dev/null || true
+        podman logs --tail=120 langfuse-postgres 2>/dev/null || true
+        podman logs --tail=120 langfuse-clickhouse 2>/dev/null || true
+        podman logs --tail=120 langfuse-redis 2>/dev/null || true
+        podman logs --tail=120 langfuse-minio 2>/dev/null || true
+        exit 1
+      fi
+
+      echo "Writing helper scripts..."
+
+      cat > /root/langfuse-status.sh <<'EOF'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/langfuse-demo.env
+
+      echo "Containers:"
+      podman ps -a --filter name=langfuse
+
+      echo
+      echo "Health:"
+      curl -fsS "http://127.0.0.1:${LANGFUSE_PORT}/api/public/health" | jq . || true
+
+      echo
+      echo "Readiness:"
+      curl -fsS "http://127.0.0.1:${LANGFUSE_PORT}/api/public/ready" | jq . || true
+
+      echo
+      echo "Public URL:"
+      echo "${LANGFUSE_PUBLIC_URL}"
+
+      echo
+      echo "Login:"
+      echo "Email: ${LANGFUSE_INIT_USER_EMAIL}"
+      echo "Password: ${LANGFUSE_INIT_USER_PASSWORD}"
+
+      echo
+      echo "Project keys:"
+      echo "Public key: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY}"
+      echo "Secret key: ${LANGFUSE_INIT_PROJECT_SECRET_KEY}"
+
+      echo
+      echo "Recent web logs:"
+      podman logs --tail=80 langfuse-web || true
+
+      echo
+      echo "Recent worker logs:"
+      podman logs --tail=80 langfuse-worker || true
+      EOF
+
+      chmod +x /root/langfuse-status.sh
+
+      cat > /root/langfuse-test.sh <<'EOF'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/langfuse-demo.env
+
+      echo "Testing Langfuse health..."
+      curl -fsS "http://127.0.0.1:${LANGFUSE_PORT}/api/public/health" | jq . || true
+
+      echo
+      echo "Testing Langfuse readiness..."
+      curl -fsS "http://127.0.0.1:${LANGFUSE_PORT}/api/public/ready" | jq . || true
+
+      echo
+      echo "Open:"
+      echo "${LANGFUSE_PUBLIC_URL}"
+
+      echo
+      echo "Login:"
+      echo "Email: ${LANGFUSE_INIT_USER_EMAIL}"
+      echo "Password: ${LANGFUSE_INIT_USER_PASSWORD}"
+
+      echo
+      echo "Project:"
+      echo "${LANGFUSE_INIT_PROJECT_NAME}"
+
+      echo
+      echo "Project API keys:"
+      echo "LANGFUSE_PUBLIC_KEY=${LANGFUSE_INIT_PROJECT_PUBLIC_KEY}"
+      echo "LANGFUSE_SECRET_KEY=${LANGFUSE_INIT_PROJECT_SECRET_KEY}"
+      echo "LANGFUSE_HOST=${LANGFUSE_PUBLIC_URL}"
+      EOF
+
+      chmod +x /root/langfuse-test.sh
+
+      cat > /root/langfuse-send-test-trace.sh <<'EOF'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      source /root/langfuse-demo.env
+
+      LANGFUSE_HOST="${LANGFUSE_HOST:-http://127.0.0.1:${LANGFUSE_PORT}}"
+      TRACE_ID="redu-demo-$(date +%s)"
+
+      AUTH="$(printf "%s:%s" "$LANGFUSE_INIT_PROJECT_PUBLIC_KEY" "$LANGFUSE_INIT_PROJECT_SECRET_KEY" | base64 -w0)"
+
+      echo "Sending test trace to Langfuse..."
+      echo "Host: $LANGFUSE_HOST"
+      echo "Trace ID: $TRACE_ID"
+
+      curl -sS -X POST "${LANGFUSE_HOST}/api/public/ingestion" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Basic ${AUTH}" \
+        -d "$(jq -n \
+          --arg traceId "$TRACE_ID" \
+          '{
+            batch: [
+              {
+                id: ("event-" + $traceId),
+                type: "trace-create",
+                timestamp: now | todateiso8601,
+                body: {
+                  id: $traceId,
+                  name: "redu.cloud Langfuse test trace",
+                  userId: "demo-user",
+                  sessionId: "redu-cloud-demo-session",
+                  input: "What is redu.cloud useful for?",
+                  output: "Private AI infrastructure, observability, and startup automation demos."
+                }
+              },
+              {
+                id: ("generation-" + $traceId),
+                type: "generation-create",
+                timestamp: now | todateiso8601,
+                body: {
+                  id: ("generation-" + $traceId),
+                  traceId: $traceId,
+                  name: "ollama-demo-generation",
+                  model: "deepseek-r1:1.5b",
+                  input: "What is redu.cloud useful for?",
+                  output: "Private AI infrastructure and observability for startup teams."
+                }
+              }
+            ]
+          }')" | jq
+
+      echo
+      echo "If accepted, open Langfuse and check Traces."
+      EOF
+
+      chmod +x /root/langfuse-send-test-trace.sh
+
+      if [ "${LANGFUSE_SEND_TEST_TRACE_ON_BOOT:-true}" = "true" ]; then
+        echo "Sending initial Langfuse test trace..."
+
+        if /root/langfuse-send-test-trace.sh; then
+          echo "Initial Langfuse test trace sent successfully."
+        else
+          echo "WARNING: Initial Langfuse test trace failed."
+          echo "Langfuse itself is running, so continuing."
+        fi
+      else
+        echo "Initial Langfuse test trace is disabled."
+      fi
+
+      cat > /root/langfuse-restart.sh <<'EOF'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      cd /opt/langfuse
+      podman-compose --env-file /opt/langfuse/.env down
+      podman-compose --env-file /opt/langfuse/.env up -d
+
+      echo "Langfuse restarted."
+      podman ps -a --filter name=langfuse
+      EOF
+
+      chmod +x /root/langfuse-restart.sh
+
+      cat > /root/langfuse-recreate-web-worker.sh <<'EOF'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      cd /opt/langfuse
+
+      podman rm -f langfuse-worker langfuse-web 2>/dev/null || true
+      podman-compose --env-file /opt/langfuse/.env up -d langfuse-worker langfuse-web
+
+      echo
+      echo "Web/worker recreated."
+      echo
+      podman exec langfuse-worker printenv NEXTAUTH_URL || true
+      podman exec langfuse-web printenv NEXTAUTH_URL || true
+      EOF
+
+      chmod +x /root/langfuse-recreate-web-worker.sh
+
+      cat > /root/LANGFUSE_README.txt <<EOF
+      redu.cloud Langfuse LLM Observability template is ready.
+
+      UI:
+        ${LANGFUSE_PUBLIC_URL}
+
+      Login:
+        Email: ${LANGFUSE_INIT_USER_EMAIL}
+        Password: ${LANGFUSE_INIT_USER_PASSWORD}
+
+      Organization:
+        ${LANGFUSE_INIT_ORG_NAME}
+        ID: ${LANGFUSE_INIT_ORG_ID}
+
+      Project:
+        ${LANGFUSE_INIT_PROJECT_NAME}
+        ID: ${LANGFUSE_INIT_PROJECT_ID}
+
+      Project API keys:
+        LANGFUSE_PUBLIC_KEY=${LANGFUSE_INIT_PROJECT_PUBLIC_KEY}
+        LANGFUSE_SECRET_KEY=${LANGFUSE_INIT_PROJECT_SECRET_KEY}
+        LANGFUSE_HOST=${LANGFUSE_PUBLIC_URL}
+
+      What this template gives you:
+        - Langfuse v3 self-hosted LLM observability
+        - Langfuse web UI
+        - Langfuse worker
+        - PostgreSQL persistence
+        - ClickHouse event/trace storage
+        - Redis
+        - MinIO object storage
+        - Automated headless organization/project/user/API key initialization
+        - Health/readiness checks
+        - Test trace script
+        - Initial test trace sent automatically on boot
+
+      Useful commands:
+        /root/langfuse-status.sh
+        /root/langfuse-test.sh
+        /root/langfuse-send-test-trace.sh
+        /root/langfuse-restart.sh
+        /root/langfuse-recreate-web-worker.sh
+
+      App directory:
+        /opt/langfuse
+
+      Env files:
+        /root/langfuse-demo.env
+        /opt/langfuse/.env
+
+      Logs:
+        /var/log/langfuse-bootstrap.log
+        /var/log/langfuse-bootstrap-runcmd.log
+        podman logs -f langfuse-web
+        podman logs -f langfuse-worker
+        podman logs -f langfuse-postgres
+        podman logs -f langfuse-clickhouse
+        podman logs -f langfuse-redis
+        podman logs -f langfuse-minio
+
+      Service:
+        systemctl status langfuse.service
+        systemctl restart langfuse.service
+
+      Test trace:
+        /root/langfuse-send-test-trace.sh
+
+      Security notes:
+        - Change LANGFUSE_INIT_USER_PASSWORD before production use.
+        - Put Langfuse behind HTTPS / Nginx Proxy Manager for real users.
+        - Keep project secret key private.
+        - For production, plan backups for Postgres, ClickHouse, and MinIO volumes.
+      EOF
+
+      chmod 600 /root/LANGFUSE_README.txt
+
+      echo "========================================"
+      echo " Langfuse deployment finished"
+      echo " UI: ${LANGFUSE_PUBLIC_URL}"
+      echo " Login email: ${LANGFUSE_INIT_USER_EMAIL}"
+      echo " Login password: ${LANGFUSE_INIT_USER_PASSWORD}"
+      echo " Public key: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY}"
+      echo " Secret key: ${LANGFUSE_INIT_PROJECT_SECRET_KEY}"
+      echo " Initial trace on boot: ${LANGFUSE_SEND_TEST_TRACE_ON_BOOT}"
+      echo " README: /root/LANGFUSE_README.txt"
+      echo " Logs: ${LOG_FILE}"
+      echo "========================================"
+
+runcmd:
+  - [ bash, -lc, "/usr/local/bin/langfuse_bootstrap.sh > /var/log/langfuse-bootstrap-runcmd.log 2>&1" ]

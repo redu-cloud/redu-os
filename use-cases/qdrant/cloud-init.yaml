@@ -1,0 +1,799 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+  - podman
+  - curl
+  - jq
+  - openssl
+  - nodejs
+  - npm
+  - psmisc
+
+write_files:
+  - path: /root/qdrant-demo.env
+    permissions: "0600"
+    content: |
+      # Public URL for users.
+      # Leave empty to auto-detect public IP and use http://IP:6333
+      QDRANT_PUBLIC_URL=""
+
+      # Qdrant
+      QDRANT_IMAGE="docker.io/qdrant/qdrant:latest"
+      QDRANT_PORT=6333
+      QDRANT_GRPC_PORT=6334
+
+      # Qdrant API key.
+      # Leave AUTO_GENERATE for cloud-init.
+      QDRANT_API_KEY=AUTO_GENERATE
+
+      # Default demo collection
+      QDRANT_COLLECTION=startup_memory
+      QDRANT_VECTOR_SIZE=768
+      QDRANT_DISTANCE=Cosine
+
+      # Bridge API
+      BRIDGE_PORT=3002
+      BRIDGE_API_KEY=AUTO_GENERATE
+
+      # Embeddings provider.
+      # For real semantic search, set this to your Ollama VM URL.
+      # Example: OLLAMA_URL=http://10.1.0.224:11434
+      EMBEDDINGS_ENABLED=true
+      OLLAMA_URL=http://YOUR_OLLAMA_VM_IP:11434
+      OLLAMA_EMBED_MODEL=nomic-embed-text
+
+      # If true, bootstrap validates that Ollama returns a 768-dimensional vector.
+      VALIDATE_EMBEDDINGS_ON_BOOT=true
+
+  - path: /etc/containers/registries.conf
+    permissions: "0644"
+    content: |
+      unqualified-search-registries = ["docker.io"]
+
+      [[registry]]
+      prefix = "docker.io"
+      location = "docker.io"
+
+  - path: /usr/local/bin/qdrant_bootstrap.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      LOG_FILE="/var/log/qdrant-bootstrap.log"
+      exec > >(tee -a "$LOG_FILE") 2>&1
+
+      echo "========================================"
+      echo " redu.cloud Qdrant bootstrap"
+      echo " Started: $(date -Is)"
+      echo "========================================"
+
+      source /root/qdrant-demo.env
+
+      APP_DIR="/opt/qdrant"
+      BRIDGE_DIR="/opt/qdrant-bridge"
+
+      mkdir -p "$APP_DIR"
+      mkdir -p "$BRIDGE_DIR"
+
+      if [ -z "${QDRANT_PUBLIC_URL:-}" ]; then
+        PUBLIC_IP="$(curl -fsS --max-time 10 https://api.ipify.org || true)"
+        if [ -z "$PUBLIC_IP" ]; then
+          PUBLIC_IP="$(hostname -I | awk '{print $1}')"
+        fi
+        QDRANT_PUBLIC_URL="http://${PUBLIC_IP}:${QDRANT_PORT}"
+      else
+        PUBLIC_IP="$(echo "$QDRANT_PUBLIC_URL" | sed -E 's#^https?://##' | cut -d: -f1 | cut -d/ -f1)"
+      fi
+
+      if [ "${QDRANT_API_KEY:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        QDRANT_API_KEY="$(openssl rand -hex 32)"
+      fi
+
+      if [ "${BRIDGE_API_KEY:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        BRIDGE_API_KEY="$(openssl rand -hex 32)"
+      fi
+
+      if [ "${EMBEDDINGS_ENABLED:-false}" = "true" ]; then
+        if echo "${OLLAMA_URL:-}" | grep -q "YOUR_OLLAMA_VM_IP"; then
+          echo "ERROR: EMBEDDINGS_ENABLED=true but OLLAMA_URL is still a placeholder."
+          echo "Set OLLAMA_URL to your Ollama VM, for example:"
+          echo "OLLAMA_URL=http://10.1.0.224:11434"
+          exit 1
+        fi
+      fi
+
+      echo "Writing normalized /root/qdrant-demo.env..."
+
+      cat > /root/qdrant-demo.env <<EOF
+      QDRANT_PUBLIC_URL="${QDRANT_PUBLIC_URL}"
+
+      QDRANT_IMAGE="${QDRANT_IMAGE}"
+      QDRANT_PORT=${QDRANT_PORT}
+      QDRANT_GRPC_PORT=${QDRANT_GRPC_PORT}
+
+      QDRANT_API_KEY=${QDRANT_API_KEY}
+
+      QDRANT_COLLECTION=${QDRANT_COLLECTION}
+      QDRANT_VECTOR_SIZE=${QDRANT_VECTOR_SIZE}
+      QDRANT_DISTANCE=${QDRANT_DISTANCE}
+
+      BRIDGE_PORT=${BRIDGE_PORT}
+      BRIDGE_API_KEY=${BRIDGE_API_KEY}
+
+      EMBEDDINGS_ENABLED=${EMBEDDINGS_ENABLED}
+      OLLAMA_URL=${OLLAMA_URL}
+      OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL}
+      VALIDATE_EMBEDDINGS_ON_BOOT=${VALIDATE_EMBEDDINGS_ON_BOOT}
+      EOF
+
+      chmod 600 /root/qdrant-demo.env
+      source /root/qdrant-demo.env
+
+      if [ "${EMBEDDINGS_ENABLED}" = "true" ] && [ "${VALIDATE_EMBEDDINGS_ON_BOOT}" = "true" ]; then
+        echo "Testing Ollama embeddings before starting bridge..."
+
+        EMBED_TEST_RESPONSE="$(curl -sS -X POST "${OLLAMA_URL}/api/embeddings" \
+          -H "Content-Type: application/json" \
+          -d "{
+            \"model\": \"${OLLAMA_EMBED_MODEL}\",
+            \"prompt\": \"startup pricing concern\"
+          }")"
+
+        echo "$EMBED_TEST_RESPONSE" > /root/qdrant-ollama-embedding-test-response.json
+
+        EMBED_SIZE="$(echo "$EMBED_TEST_RESPONSE" | jq -r '.embedding | length // 0' 2>/dev/null || echo 0)"
+
+        if [ "$EMBED_SIZE" != "$QDRANT_VECTOR_SIZE" ]; then
+          echo "ERROR: Ollama embedding size mismatch."
+          echo "Expected: ${QDRANT_VECTOR_SIZE}"
+          echo "Got: ${EMBED_SIZE}"
+          echo "Response:"
+          echo "$EMBED_TEST_RESPONSE" | jq . || echo "$EMBED_TEST_RESPONSE"
+          exit 1
+        fi
+
+        echo "Ollama embeddings OK. Vector size: ${EMBED_SIZE}"
+      fi
+
+      echo "Cleaning old containers if present..."
+      podman rm -f qdrant 2>/dev/null || true
+
+      echo "Freeing ports if needed..."
+      fuser -k "${QDRANT_PORT}/tcp" 2>/dev/null || true
+      fuser -k "${QDRANT_GRPC_PORT}/tcp" 2>/dev/null || true
+      fuser -k "${BRIDGE_PORT}/tcp" 2>/dev/null || true
+
+      echo "Creating Qdrant volume..."
+      podman volume create qdrant_data || true
+
+      echo "Starting Qdrant..."
+
+      podman run -d \
+        --name qdrant \
+        --restart unless-stopped \
+        -p "${QDRANT_PORT}:6333" \
+        -p "${QDRANT_GRPC_PORT}:6334" \
+        -e QDRANT__SERVICE__API_KEY="${QDRANT_API_KEY}" \
+        -v qdrant_data:/qdrant/storage \
+        "${QDRANT_IMAGE}"
+
+      echo "Creating systemd service for Qdrant..."
+
+      cat > /etc/systemd/system/qdrant.service <<EOF
+      [Unit]
+      Description=Qdrant vector database
+      Requires=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/bin/podman start qdrant
+      ExecStop=/usr/bin/podman stop qdrant
+      TimeoutStartSec=0
+
+      [Install]
+      WantedBy=multi-user.target
+      EOF
+
+      systemctl daemon-reload
+      systemctl enable qdrant.service
+
+      echo "Waiting for Qdrant..."
+
+      QDRANT_READY=0
+
+      for i in $(seq 1 120); do
+        if curl -fsS \
+          -H "api-key: ${QDRANT_API_KEY}" \
+          "http://127.0.0.1:${QDRANT_PORT}/collections" >/dev/null 2>&1; then
+          QDRANT_READY=1
+          echo "Qdrant is reachable."
+          break
+        fi
+
+        echo "Waiting for Qdrant... attempt $i/120"
+        sleep 3
+      done
+
+      if [ "$QDRANT_READY" != "1" ]; then
+        echo "Qdrant did not become reachable."
+        podman ps -a || true
+        podman logs --tail=150 qdrant || true
+        exit 1
+      fi
+
+      echo "Creating demo collection if needed: ${QDRANT_COLLECTION}"
+
+      CREATE_COLLECTION_RESPONSE="$(curl -sS -X PUT \
+        "http://127.0.0.1:${QDRANT_PORT}/collections/${QDRANT_COLLECTION}" \
+        -H "Content-Type: application/json" \
+        -H "api-key: ${QDRANT_API_KEY}" \
+        -d "{
+          \"vectors\": {
+            \"size\": ${QDRANT_VECTOR_SIZE},
+            \"distance\": \"${QDRANT_DISTANCE}\"
+          }
+        }" || true)"
+
+      echo "$CREATE_COLLECTION_RESPONSE" > /root/qdrant-create-collection-response.json
+      echo "$CREATE_COLLECTION_RESPONSE" | jq . || echo "$CREATE_COLLECTION_RESPONSE"
+
+      echo "Creating Qdrant bridge API..."
+
+      cd "$BRIDGE_DIR"
+
+      cat > package.json <<'EOF'
+      {
+        "scripts": {
+          "start": "node server.js"
+        },
+        "dependencies": {
+          "express": "^4.18.3"
+        }
+      }
+      EOF
+
+      npm install
+
+      cat > server.js <<'EOF'
+      const express = require("express");
+      const crypto = require("crypto");
+
+      const app = express();
+      app.use(express.json({ limit: "5mb" }));
+
+      const {
+        QDRANT_URL,
+        QDRANT_API_KEY,
+        QDRANT_COLLECTION,
+        QDRANT_VECTOR_SIZE,
+        BRIDGE_API_KEY,
+        EMBEDDINGS_ENABLED,
+        OLLAMA_URL,
+        OLLAMA_EMBED_MODEL
+      } = process.env;
+
+      const vectorSize = Number(QDRANT_VECTOR_SIZE || 768);
+
+      function requireBridgeKey(req, res) {
+        if (req.headers["x-api-key"] !== BRIDGE_API_KEY) {
+          res.status(401).json({ ok: false, error: "Invalid API key" });
+          return false;
+        }
+
+        return true;
+      }
+
+      function deterministicVector(text) {
+        const vector = new Array(vectorSize).fill(0);
+
+        for (let i = 0; i < vectorSize; i++) {
+          const hash = crypto
+            .createHash("sha256")
+            .update(`${text}:${i}`)
+            .digest();
+
+          const value = hash.readUInt32BE(0) / 0xffffffff;
+          vector[i] = value * 2 - 1;
+        }
+
+        return vector;
+      }
+
+      async function embedText(text) {
+        const useOllama =
+          EMBEDDINGS_ENABLED === "true" &&
+          OLLAMA_URL &&
+          OLLAMA_EMBED_MODEL;
+
+        if (!useOllama) {
+          return deterministicVector(text);
+        }
+
+        const resp = await fetch(`${OLLAMA_URL}/api/embeddings`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            model: OLLAMA_EMBED_MODEL,
+            prompt: text
+          })
+        });
+
+        const body = await resp.text();
+
+        if (!resp.ok) {
+          throw new Error(`Ollama embeddings failed: ${resp.status} ${body}`);
+        }
+
+        const data = JSON.parse(body);
+        const embedding = data.embedding;
+
+        if (!Array.isArray(embedding)) {
+          throw new Error("Ollama did not return an embedding array.");
+        }
+
+        if (embedding.length !== vectorSize) {
+          throw new Error(
+            `Embedding size mismatch. Collection expects ${vectorSize}, got ${embedding.length}.`
+          );
+        }
+
+        return embedding;
+      }
+
+      async function qdrant(path, options = {}) {
+        const resp = await fetch(`${QDRANT_URL}${path}`, {
+          ...options,
+          headers: {
+            "Content-Type": "application/json",
+            "api-key": QDRANT_API_KEY,
+            ...(options.headers || {})
+          }
+        });
+
+        const text = await resp.text();
+
+        let json = null;
+        try {
+          json = text ? JSON.parse(text) : null;
+        } catch (_) {
+          json = { raw: text };
+        }
+
+        if (!resp.ok) {
+          const err = new Error(`Qdrant error: ${resp.status}`);
+          err.status = resp.status;
+          err.body = json;
+          throw err;
+        }
+
+        return json;
+      }
+
+      app.get("/", (req, res) => {
+        res.json({
+          ok: true,
+          service: "Qdrant Memory Bridge",
+          collection: QDRANT_COLLECTION,
+          vector_size: vectorSize,
+          embeddings_enabled: EMBEDDINGS_ENABLED === "true",
+          embedding_mode: EMBEDDINGS_ENABLED === "true" ? "ollama" : "deterministic-demo",
+          ollama_url: EMBEDDINGS_ENABLED === "true" ? OLLAMA_URL : null,
+          ollama_embed_model: EMBEDDINGS_ENABLED === "true" ? OLLAMA_EMBED_MODEL : null,
+          endpoints: {
+            upsert_memory: "POST /api/memory/upsert",
+            search_memory: "POST /api/memory/search",
+            seed_demo: "POST /api/demo/seed",
+            embeddings_test: "GET /api/embeddings/test",
+            collection_info: "GET /api/collection"
+          }
+        });
+      });
+
+      app.get("/api/embeddings/test", async (req, res) => {
+        try {
+          if (!requireBridgeKey(req, res)) return;
+
+          const text = req.query.text || "startup pricing concern";
+          const vector = await embedText(String(text));
+
+          res.json({
+            ok: true,
+            embeddings_enabled: EMBEDDINGS_ENABLED === "true",
+            embedding_mode: EMBEDDINGS_ENABLED === "true" ? "ollama" : "deterministic-demo",
+            model: EMBEDDINGS_ENABLED === "true" ? OLLAMA_EMBED_MODEL : "deterministic-demo",
+            vector_size: vector.length,
+            sample: vector.slice(0, 5)
+          });
+        } catch (err) {
+          res.status(500).json({
+            ok: false,
+            error: err.message
+          });
+        }
+      });
+
+      app.get("/api/collection", async (req, res) => {
+        try {
+          if (!requireBridgeKey(req, res)) return;
+
+          const data = await qdrant(`/collections/${QDRANT_COLLECTION}`);
+
+          res.json({
+            ok: true,
+            collection: QDRANT_COLLECTION,
+            qdrant: data
+          });
+        } catch (err) {
+          res.status(500).json({
+            ok: false,
+            error: err.message,
+            details: err.body || null
+          });
+        }
+      });
+
+      app.post("/api/memory/upsert", async (req, res) => {
+        try {
+          if (!requireBridgeKey(req, res)) return;
+
+          const text = req.body.text || req.body.message || "";
+          const metadata = req.body.metadata || {};
+          const id = req.body.id || crypto.randomUUID();
+
+          if (!text) {
+            return res.status(400).json({
+              ok: false,
+              error: "text is required"
+            });
+          }
+
+          const vector = req.body.vector || await embedText(text);
+
+          if (!Array.isArray(vector) || vector.length !== vectorSize) {
+            return res.status(400).json({
+              ok: false,
+              error: `vector must be an array with ${vectorSize} numbers`
+            });
+          }
+
+          const payload = {
+            points: [
+              {
+                id,
+                vector,
+                payload: {
+                  text,
+                  ...metadata,
+                  created_at: new Date().toISOString()
+                }
+              }
+            ]
+          };
+
+          const data = await qdrant(`/collections/${QDRANT_COLLECTION}/points?wait=true`, {
+            method: "PUT",
+            body: JSON.stringify(payload)
+          });
+
+          res.json({
+            ok: true,
+            id,
+            collection: QDRANT_COLLECTION,
+            embedding_mode: EMBEDDINGS_ENABLED === "true" ? "ollama" : "deterministic-demo",
+            qdrant: data
+          });
+        } catch (err) {
+          res.status(500).json({
+            ok: false,
+            error: err.message,
+            details: err.body || null
+          });
+        }
+      });
+
+      app.post("/api/memory/search", async (req, res) => {
+        try {
+          if (!requireBridgeKey(req, res)) return;
+
+          const query = req.body.query || req.body.text || "";
+          const limit = Number(req.body.limit || 5);
+
+          if (!query && !req.body.vector) {
+            return res.status(400).json({
+              ok: false,
+              error: "query or vector is required"
+            });
+          }
+
+          const vector = req.body.vector || await embedText(query);
+
+          if (!Array.isArray(vector) || vector.length !== vectorSize) {
+            return res.status(400).json({
+              ok: false,
+              error: `vector must be an array with ${vectorSize} numbers`
+            });
+          }
+
+          const data = await qdrant(`/collections/${QDRANT_COLLECTION}/points/search`, {
+            method: "POST",
+            body: JSON.stringify({
+              vector,
+              limit,
+              with_payload: true
+            })
+          });
+
+          res.json({
+            ok: true,
+            collection: QDRANT_COLLECTION,
+            query,
+            embedding_mode: EMBEDDINGS_ENABLED === "true" ? "ollama" : "deterministic-demo",
+            results: data.result || []
+          });
+        } catch (err) {
+          res.status(500).json({
+            ok: false,
+            error: err.message,
+            details: err.body || null
+          });
+        }
+      });
+
+      app.post("/api/demo/seed", async (req, res) => {
+        try {
+          if (!requireBridgeKey(req, res)) return;
+
+          const demoItems = [
+            {
+              text: "Customer says onboarding is confusing and asks for a simpler first-run setup.",
+              metadata: {
+                type: "feedback",
+                category: "onboarding",
+                priority: "high",
+                source: "demo"
+              }
+            },
+            {
+              text: "Founder asks for predictable pricing and wants to avoid surprise cloud bills.",
+              metadata: {
+                type: "sales_signal",
+                category: "pricing",
+                priority: "medium",
+                source: "demo"
+              }
+            },
+            {
+              text: "User reports that API deployment worked but wants better documentation examples.",
+              metadata: {
+                type: "feedback",
+                category: "docs",
+                priority: "medium",
+                source: "demo"
+              }
+            }
+          ];
+
+          const inserted = [];
+
+          for (const item of demoItems) {
+            const id = crypto.randomUUID();
+            const vector = await embedText(item.text);
+
+            await qdrant(`/collections/${QDRANT_COLLECTION}/points?wait=true`, {
+              method: "PUT",
+              body: JSON.stringify({
+                points: [
+                  {
+                    id,
+                    vector,
+                    payload: {
+                      text: item.text,
+                      ...item.metadata,
+                      created_at: new Date().toISOString()
+                    }
+                  }
+                ]
+              })
+            });
+
+            inserted.push({ id, text: item.text });
+          }
+
+          res.json({
+            ok: true,
+            collection: QDRANT_COLLECTION,
+            embedding_mode: EMBEDDINGS_ENABLED === "true" ? "ollama" : "deterministic-demo",
+            inserted
+          });
+        } catch (err) {
+          res.status(500).json({
+            ok: false,
+            error: err.message,
+            details: err.body || null
+          });
+        }
+      });
+
+      app.listen(Number(process.env.BRIDGE_PORT || 3002), "0.0.0.0", () => {
+        console.log(`Qdrant bridge running on port ${process.env.BRIDGE_PORT || 3002}`);
+      });
+      EOF
+
+      cat > /etc/systemd/system/qdrant-bridge.service <<EOF
+      [Unit]
+      Description=Qdrant Memory Bridge
+      After=network-online.target qdrant.service
+      Wants=network-online.target
+
+      [Service]
+      WorkingDirectory=/opt/qdrant-bridge
+      Environment=QDRANT_URL=http://127.0.0.1:${QDRANT_PORT}
+      Environment=QDRANT_API_KEY=${QDRANT_API_KEY}
+      Environment=QDRANT_COLLECTION=${QDRANT_COLLECTION}
+      Environment=QDRANT_VECTOR_SIZE=${QDRANT_VECTOR_SIZE}
+      Environment=BRIDGE_PORT=${BRIDGE_PORT}
+      Environment=BRIDGE_API_KEY=${BRIDGE_API_KEY}
+      Environment=EMBEDDINGS_ENABLED=${EMBEDDINGS_ENABLED}
+      Environment=OLLAMA_URL=${OLLAMA_URL}
+      Environment=OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL}
+      ExecStart=/usr/bin/node /opt/qdrant-bridge/server.js
+      Restart=always
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+      EOF
+
+      systemctl daemon-reload
+      systemctl enable --now qdrant-bridge.service
+
+      echo "Waiting for Qdrant bridge..."
+
+      BRIDGE_READY=0
+
+      for i in $(seq 1 60); do
+        if curl -fsS "http://127.0.0.1:${BRIDGE_PORT}" >/dev/null 2>&1; then
+          BRIDGE_READY=1
+          echo "Qdrant bridge is reachable."
+          break
+        fi
+
+        echo "Waiting for Qdrant bridge... attempt $i/60"
+        sleep 3
+      done
+
+      if [ "$BRIDGE_READY" != "1" ]; then
+        echo "Qdrant bridge did not become reachable."
+        systemctl status qdrant-bridge --no-pager || true
+        journalctl -u qdrant-bridge --no-pager -n 100 || true
+        exit 1
+      fi
+
+      echo "Testing bridge embedding mode..."
+
+      BRIDGE_MODE_RESPONSE="$(curl -sS "http://127.0.0.1:${BRIDGE_PORT}/" || true)"
+      echo "$BRIDGE_MODE_RESPONSE" > /root/qdrant-bridge-mode-response.json
+      echo "$BRIDGE_MODE_RESPONSE" | jq . || echo "$BRIDGE_MODE_RESPONSE"
+
+      if [ "${EMBEDDINGS_ENABLED}" = "true" ]; then
+        BRIDGE_EMBED_TEST="$(curl -sS \
+          -H "X-API-Key: ${BRIDGE_API_KEY}" \
+          "http://127.0.0.1:${BRIDGE_PORT}/api/embeddings/test" || true)"
+
+        echo "$BRIDGE_EMBED_TEST" > /root/qdrant-bridge-embedding-test-response.json
+        echo "$BRIDGE_EMBED_TEST" | jq . || echo "$BRIDGE_EMBED_TEST"
+
+        BRIDGE_EMBED_SIZE="$(echo "$BRIDGE_EMBED_TEST" | jq -r '.vector_size // 0' 2>/dev/null || echo 0)"
+
+        if [ "$BRIDGE_EMBED_SIZE" != "$QDRANT_VECTOR_SIZE" ]; then
+          echo "ERROR: Bridge embedding test failed."
+          exit 1
+        fi
+      fi
+
+      echo "Writing output file..."
+
+      cat > /root/qdrant-demo-output.txt <<EOF
+      redu.cloud Qdrant demo is ready.
+
+      Qdrant URL:
+      ${QDRANT_PUBLIC_URL}
+
+      Qdrant REST API:
+      ${QDRANT_PUBLIC_URL}/collections
+
+      Qdrant API key:
+      ${QDRANT_API_KEY}
+
+      Qdrant bridge:
+      http://${PUBLIC_IP}:${BRIDGE_PORT}
+
+      Qdrant bridge API key:
+      ${BRIDGE_API_KEY}
+
+      Default collection:
+      ${QDRANT_COLLECTION}
+
+      Vector size:
+      ${QDRANT_VECTOR_SIZE}
+
+      Embeddings enabled:
+      ${EMBEDDINGS_ENABLED}
+
+      Ollama URL:
+      ${OLLAMA_URL}
+
+      Ollama embedding model:
+      ${OLLAMA_EMBED_MODEL}
+
+      Test bridge status:
+
+      curl -sS "http://${PUBLIC_IP}:${BRIDGE_PORT}/" | jq
+
+      Test embeddings through bridge:
+
+      curl -sS "http://${PUBLIC_IP}:${BRIDGE_PORT}/api/embeddings/test" \\
+        -H "X-API-Key: ${BRIDGE_API_KEY}" | jq
+
+      Test Qdrant directly:
+
+      curl -sS "${QDRANT_PUBLIC_URL}/collections" \\
+        -H "api-key: ${QDRANT_API_KEY}" | jq
+
+      Delete and recreate collection:
+
+      curl -sS -X DELETE "http://127.0.0.1:${QDRANT_PORT}/collections/${QDRANT_COLLECTION}" \\
+        -H "api-key: ${QDRANT_API_KEY}" | jq
+
+      curl -sS -X PUT "http://127.0.0.1:${QDRANT_PORT}/collections/${QDRANT_COLLECTION}" \\
+        -H "Content-Type: application/json" \\
+        -H "api-key: ${QDRANT_API_KEY}" \\
+        -d '{
+          "vectors": {
+            "size": ${QDRANT_VECTOR_SIZE},
+            "distance": "${QDRANT_DISTANCE}"
+          }
+        }' | jq
+
+      Seed demo memory:
+
+      curl -sS -X POST "http://${PUBLIC_IP}:${BRIDGE_PORT}/api/demo/seed" \\
+        -H "Content-Type: application/json" \\
+        -H "X-API-Key: ${BRIDGE_API_KEY}" | jq
+
+      Search memory:
+
+      curl -sS -X POST "http://${PUBLIC_IP}:${BRIDGE_PORT}/api/memory/search" \\
+        -H "Content-Type: application/json" \\
+        -H "X-API-Key: ${BRIDGE_API_KEY}" \\
+        -d '{
+          "query": "startup pricing concern",
+          "limit": 3
+        }' | jq '.results[] | {score, text: .payload.text, category: .payload.category}'
+
+      Expected semantic result:
+      The pricing / surprise cloud bills memory should be first.
+
+      Logs:
+      /var/log/qdrant-bootstrap.log
+
+      Normalized config:
+      /root/qdrant-demo.env
+      EOF
+
+      chmod 600 /root/qdrant-demo-output.txt
+
+      echo "========================================"
+      echo " Qdrant demo ready"
+      echo "========================================"
+      cat /root/qdrant-demo-output.txt
+
+runcmd:
+  - [ bash, -lc, "/usr/local/bin/qdrant_bootstrap.sh" ]
