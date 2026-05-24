@@ -94,6 +94,12 @@ Generated Supabase and Qdrant credentials live in `.local/supabase-local.env`.
 
 Supabase stores the structured event/action/feedback records. Qdrant stores vector memory for events in the `redu_os_events` collection. Ollama runs DeepSeek for insight generation and `nomic-embed-text` for embeddings. If the embedding model is temporarily unavailable, the collector can still store memory with deterministic fallback embeddings.
 
+For a full walkthrough with health checks, curl examples, Supabase inspection, Qdrant inspection, DeepSeek tests, and realistic startup scenarios, see [Local Stack and Use Cases](./docs/local-stack-and-use-cases.md).
+
+## Documentation
+
+- [Local Stack and Use Cases](./docs/local-stack-and-use-cases.md): one-command stack, service checks, curl examples, support/product/error/uptime/analytics scenarios, and troubleshooting.
+
 ## Build
 
 ```bash
