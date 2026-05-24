@@ -39,6 +39,7 @@ X-API-Key: your-collector-key
 | `POST /v1/actions` | Record what AI or automation decided to do |
 | `POST /v1/feedback` | Record the outcome after an action |
 | `GET /v1/context/similar` | Retrieve similar previous events, insights, actions, and feedback |
+| `POST /v1/memory/search` | Search Qdrant event memory with a natural-language query |
 
 ## Schema
 
@@ -78,7 +79,12 @@ The first run downloads `deepseek-r1:1.5b` and `nomic-embed-text`, so it can tak
 Useful follow-up commands:
 
 ```bash
+npm run doctor
+npm run status
 npm run stack:test
+npm run demo:onboarding
+npm run demo:memory
+npm run logs:collector
 npm run stack:down
 ```
 
@@ -93,6 +99,23 @@ Default local URLs:
 Generated Supabase and Qdrant credentials live in `.local/supabase-local.env`.
 
 Supabase stores the structured event/action/feedback records. Qdrant stores vector memory for events in the `redu_os_events` collection. Ollama runs DeepSeek for insight generation and `nomic-embed-text` for embeddings. If the embedding model is temporarily unavailable, the collector can still store memory with deterministic fallback embeddings.
+
+By default, API responses return clean insight fields and omit the raw Ollama payload. Set `DEBUG_AI_RAW=true` when you want the response to include model internals for debugging.
+
+Use `POST /v1/memory/search` or `npm run demo:memory` to search Qdrant memory with natural language.
+
+Use `npm run doctor` to check local tools, ports, containers, APIs, models, Qdrant memory, and Supabase tables.
+
+Use `npm run status` for a compact container/URL view, and `npm run logs`, `npm run logs:collector`, `npm run logs:ollama`, `npm run logs:qdrant`, or `npm run logs:supabase` when you need logs.
+
+To reset generated local data, use the guarded reset command:
+
+```bash
+RESET_LOCAL_DATA=true npm run reset:local
+RESET_LOCAL_DATA=true RESET_MODE=all npm run reset:local
+```
+
+`RESET_MODE=data` is the default and keeps downloaded Ollama models. `RESET_MODE=all` also removes Ollama models, generated Supabase files, and generated local secrets.
 
 For a full walkthrough with health checks, curl examples, Supabase inspection, Qdrant inspection, DeepSeek tests, and realistic startup scenarios, see [Local Stack and Use Cases](./docs/local-stack-and-use-cases.md).
 

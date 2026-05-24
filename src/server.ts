@@ -12,10 +12,11 @@ import {
 } from "./normalizers.js";
 import { getSimilarContext, storeAction, storeEvent, storeFeedback, storeInsight } from "./supabase.js";
 import { analyzeEvent } from "./ollama.js";
-import { rememberEvent } from "./qdrant.js";
+import { rememberEvent, searchMemory } from "./qdrant.js";
 import { triggerAutomation } from "./automation.js";
 import type { NormalizedEvent } from "./types.js";
-import { actionSchema, feedbackSchema, similarContextQuerySchema } from "./validation.js";
+import { actionSchema, feedbackSchema, memorySearchSchema, similarContextQuerySchema } from "./validation.js";
+import type { AiInsight } from "./ollama.js";
 
 const app = Fastify({
   logger: true,
@@ -28,13 +29,23 @@ await app.register(cors, {
 
 await app.register(helmet);
 
+function publicInsight(insight: AiInsight) {
+  if (config.DEBUG_AI_RAW) {
+    return insight;
+  }
+
+  const { raw: _raw, ...cleanInsight } = insight;
+  return cleanInsight;
+}
+
 app.get("/", async () => {
   return {
     ok: true,
     service: "redu-os-collector",
     health: "/health",
     events: "/v1/events",
-    context: "/v1/context/similar"
+    context: "/v1/context/similar",
+    memory: "/v1/memory/search"
   };
 });
 
@@ -98,7 +109,7 @@ async function handleEvent(event: NormalizedEvent) {
     action_id: storedAction?.id ?? null,
     memory,
     automation,
-    insight
+    insight: publicInsight(insight)
   };
 }
 
@@ -162,6 +173,17 @@ app.get("/v1/context/similar", async (request) => {
   return {
     ok: true,
     items
+  };
+});
+
+app.post("/v1/memory/search", async (request) => {
+  requireApiKey(request);
+  const input = memorySearchSchema.parse(request.body);
+  const result = await searchMemory(input);
+
+  return {
+    ok: result.searched,
+    ...result
   };
 });
 

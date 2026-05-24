@@ -52,7 +52,21 @@ The first run can take a while because it downloads Supabase images, Qdrant, Oll
 Run the smoke test any time:
 
 ```bash
+npm run doctor
+npm run status
 npm run stack:test
+```
+
+Run the polished onboarding demo:
+
+```bash
+npm run demo:onboarding
+```
+
+Search stored Qdrant memory:
+
+```bash
+npm run demo:memory
 ```
 
 Stop the local stack:
@@ -61,7 +75,98 @@ Stop the local stack:
 npm run stack:down
 ```
 
+Reset generated local data:
+
+```bash
+RESET_LOCAL_DATA=true npm run reset:local
+```
+
+Reset everything, including downloaded Ollama models and generated secrets:
+
+```bash
+RESET_LOCAL_DATA=true RESET_MODE=all npm run reset:local
+```
+
 ## Quick Health Checks
+
+The fastest full diagnostic is:
+
+```bash
+npm run doctor
+```
+
+It checks local tools, generated env files, Git ownership, ports, containers, service health, Ollama models, Qdrant memory, and Supabase tables.
+
+For a compact runtime view:
+
+```bash
+npm run status
+```
+
+For logs:
+
+```bash
+npm run logs
+npm run logs:collector
+npm run logs:ollama
+npm run logs:qdrant
+npm run logs:supabase
+```
+
+You can adjust log output with environment variables:
+
+```bash
+TAIL=300 npm run logs:collector
+FOLLOW=true npm run logs:collector
+```
+
+## Resetting Local Data
+
+The reset command is guarded because it deletes generated local runtime data.
+
+Default reset:
+
+```bash
+RESET_LOCAL_DATA=true npm run reset:local
+```
+
+This uses `RESET_MODE=data`. It stops the stack and removes:
+
+```text
+.local/qdrant
+.local/supabase/volumes/db/data
+.local/supabase/volumes/storage
+.local/supabase/volumes/functions
+```
+
+It keeps:
+
+```text
+.local/ollama
+.env
+.local/supabase-local.env
+```
+
+Use this when you want fresh Supabase tables and fresh Qdrant memory, but you do not want to re-download DeepSeek and the embedding model.
+
+Full reset:
+
+```bash
+RESET_LOCAL_DATA=true RESET_MODE=all npm run reset:local
+```
+
+This removes:
+
+```text
+.env
+.local/supabase-local.env
+.local/qdrant
+.local/ollama
+.local/supabase
+.local/supabase-src
+```
+
+Use this when you want the next `npm run stack:up` to behave like a first run.
 
 Load local secrets into your shell:
 
@@ -149,6 +254,7 @@ Then use:
 | `POST` | `/v1/actions` | Record an action taken by AI, automation, or a person |
 | `POST` | `/v1/feedback` | Record the outcome of an event/action |
 | `GET` | `/v1/context/similar` | Retrieve previous related events with insights, actions, and feedback |
+| `POST` | `/v1/memory/search` | Search Qdrant event memory with a natural-language query |
 
 ## Generic Event Contract
 
@@ -231,7 +337,7 @@ What to look for:
 }
 ```
 
-If `insight.raw.model` is `deepseek-r1:1.5b`, the local AI path is working.
+By default, the API response hides `insight.raw` so responses stay readable. Set `DEBUG_AI_RAW=true` in `.env` and restart the collector when you want to inspect the full Ollama payload. If `insight.raw.model` is `deepseek-r1:1.5b`, the local AI path is working.
 
 If you see `insight.raw.error: "fetch failed"`, the collector could not reach Ollama. Check:
 
@@ -244,6 +350,16 @@ podman logs redu-os-ollama --tail 100
 ## Use Case 2: Full Support Loop
 
 This records an event, an action, feedback, then queries similar context.
+
+The easiest version is the packaged demo:
+
+```bash
+npm run demo:onboarding
+```
+
+It prints a compact summary of the event, AI insight, Qdrant memory, action, feedback, and similar context.
+
+You can also run the raw curl example script:
 
 ```bash
 export COLLECTOR_API_KEY="$(grep '^COLLECTOR_API_KEY=' .env | cut -d= -f2-)"
@@ -568,6 +684,81 @@ Expected shape:
     }
   ]
 }
+```
+
+## Searching Qdrant Memory
+
+Use Qdrant memory search when you want semantic matching instead of exact filters.
+
+Demo command:
+
+```bash
+npm run demo:memory
+```
+
+Custom query:
+
+```bash
+npm run demo:memory -- customers blocked by keypair selection during onboarding
+```
+
+Raw curl:
+
+```bash
+COLLECTOR_API_KEY="$(grep '^COLLECTOR_API_KEY=' .env | cut -d= -f2-)"
+
+curl -sS -X POST http://127.0.0.1:3005/v1/memory/search \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: ${COLLECTOR_API_KEY}" \
+  -d '{
+    "query": "customers blocked during onboarding because keypair selection failed",
+    "limit": 5
+  }' | jq
+```
+
+Optional `score_threshold` keeps weak matches out:
+
+```bash
+COLLECTOR_API_KEY="$(grep '^COLLECTOR_API_KEY=' .env | cut -d= -f2-)"
+
+curl -sS -X POST http://127.0.0.1:3005/v1/memory/search \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: ${COLLECTOR_API_KEY}" \
+  -d '{
+    "query": "production checkout errors",
+    "limit": 5,
+    "score_threshold": 0.45
+  }' | jq
+```
+
+Expected shape:
+
+```json
+{
+  "ok": true,
+  "searched": true,
+  "collection": "redu_os_events",
+  "items": [
+    {
+      "id": "uuid",
+      "score": 0.82,
+      "event": {
+        "id": "uuid",
+        "type": "support.ticket.created",
+        "source": "demo:onboarding",
+        "severity": "high",
+        "user_email": "founder@example.com",
+        "message": "A customer cannot finish onboarding..."
+      }
+    }
+  ]
+}
+```
+
+This endpoint closes the current memory loop:
+
+```text
+event text -> embedding -> Qdrant point -> natural-language query -> embedding -> nearest event memories
 ```
 
 ## Inspecting Supabase

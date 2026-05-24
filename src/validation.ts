@@ -47,3 +47,9 @@ export const similarContextQuerySchema = z.object({
   user_email: z.string().email().optional(),
   limit: z.coerce.number().int().min(1).max(25).default(5)
 });
+
+export const memorySearchSchema = z.object({
+  query: z.string().min(2).max(2000),
+  limit: z.coerce.number().int().min(1).max(25).default(5),
+  score_threshold: z.coerce.number().min(0).max(1).optional()
+});

@@ -9,9 +9,19 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "check": "tsc --noEmit",
+    "doctor": "bash scripts/doctor.sh",
+    "status": "bash scripts/status-local-stack.sh",
+    "logs": "bash scripts/logs-local-stack.sh",
+    "logs:collector": "bash scripts/logs-local-stack.sh collector",
+    "logs:ollama": "bash scripts/logs-local-stack.sh ollama",
+    "logs:qdrant": "bash scripts/logs-local-stack.sh qdrant",
+    "logs:supabase": "bash scripts/logs-local-stack.sh supabase",
     "stack:up": "bash scripts/start-local-stack.sh",
     "stack:test": "bash scripts/test-local-stack.sh",
-    "stack:down": "bash scripts/stop-local-stack.sh"
+    "stack:down": "bash scripts/stop-local-stack.sh",
+    "reset:local": "bash scripts/reset-local-stack.sh",
+    "demo:onboarding": "bash scripts/demo-onboarding-loop.sh",
+    "demo:memory": "bash scripts/demo-memory-search.sh"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",

@@ -26,6 +26,37 @@ function fallbackInsight(event: StoredEvent): AiInsight {
   };
 }
 
+function cleanPriority(value: unknown, fallback: AiInsight["priority"]): AiInsight["priority"] {
+  const text = String(value ?? "").toLowerCase();
+
+  if (text.includes("high")) return "High";
+  if (text.includes("medium")) return "Medium";
+  if (text.includes("low")) return "Low";
+
+  return fallback;
+}
+
+function cleanSentiment(value: unknown, fallback: AiInsight["sentiment"]): AiInsight["sentiment"] {
+  const text = String(value ?? "").toLowerCase();
+
+  if (text.includes("negative")) return "Negative";
+  if (text.includes("positive")) return "Positive";
+  if (text.includes("neutral")) return "Neutral";
+
+  return fallback;
+}
+
+function cleanCategory(value: unknown, fallback: string): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  const invalid = ["low", "medium", "high", "critical", "negative", "neutral", "positive"];
+
+  if (text.length < 2 || invalid.includes(text.toLowerCase())) {
+    return fallback;
+  }
+
+  return text.slice(0, 120);
+}
+
 export async function analyzeEvent(event: StoredEvent): Promise<AiInsight> {
   if (!config.AI_ENABLED) {
     return fallbackInsight(event);
@@ -71,13 +102,14 @@ ${JSON.stringify(event, null, 2)}
     }
 
     const parsed = JSON.parse(match[0]) as Partial<AiInsight>;
+    const fallback = fallbackInsight(event);
 
     return {
-      category: parsed.category ?? fallbackInsight(event).category,
-      priority: parsed.priority ?? fallbackInsight(event).priority,
-      sentiment: parsed.sentiment ?? fallbackInsight(event).sentiment,
-      summary: parsed.summary ?? fallbackInsight(event).summary,
-      recommended_action: parsed.recommended_action ?? fallbackInsight(event).recommended_action,
+      category: cleanCategory(parsed.category, fallback.category),
+      priority: cleanPriority(parsed.priority, fallback.priority),
+      sentiment: cleanSentiment(parsed.sentiment, fallback.sentiment),
+      summary: parsed.summary ?? fallback.summary,
+      recommended_action: parsed.recommended_action ?? fallback.recommended_action,
       raw: data
     };
   } catch (error) {

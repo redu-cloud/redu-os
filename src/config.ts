@@ -16,6 +16,7 @@ const envSchema = z.object({
   QDRANT_FALLBACK_EMBEDDINGS: z.coerce.boolean().default(true),
 
   AI_ENABLED: z.coerce.boolean().default(false),
+  DEBUG_AI_RAW: z.coerce.boolean().default(false),
   OLLAMA_URL: z.string().url().default("http://127.0.0.1:11434"),
   OLLAMA_MODEL: z.string().default("deepseek-r1:8b"),
   OLLAMA_EMBED_MODEL: z.string().default("nomic-embed-text"),

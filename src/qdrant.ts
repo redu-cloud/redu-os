@@ -65,3 +65,52 @@ export async function rememberEvent(event: StoredEvent) {
 
   return { stored: true };
 }
+
+export async function searchMemory(input: {
+  query: string;
+  limit: number;
+  score_threshold?: number;
+}) {
+  if (!config.QDRANT_ENABLED) {
+    return { searched: false, reason: "qdrant_disabled", items: [] };
+  }
+
+  const vector = await embedText(input.query);
+  if (!vector) {
+    return { searched: false, reason: "embedding_failed", items: [] };
+  }
+
+  await ensureCollection(vector.length);
+
+  const results = await client.search(config.QDRANT_COLLECTION, {
+    vector,
+    limit: input.limit,
+    with_payload: true,
+    with_vector: false,
+    score_threshold: input.score_threshold
+  });
+
+  return {
+    searched: true,
+    collection: config.QDRANT_COLLECTION,
+    items: results.map((point) => {
+      const payload = (point.payload ?? {}) as Record<string, unknown>;
+
+      return {
+        id: String(point.id),
+        score: point.score,
+        event: {
+          id: String(point.id),
+          type: payload.type,
+          source: payload.source,
+          severity: payload.severity,
+          user_email: payload.user_email,
+          user_name: payload.user_name,
+          message: payload.message,
+          metadata: payload.metadata,
+          created_at: payload.created_at
+        }
+      };
+    })
+  };
+}
