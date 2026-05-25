@@ -120,6 +120,110 @@ TAIL=300 npm run logs:collector
 FOLLOW=true npm run logs:collector
 ```
 
+## Local Automation Mock
+
+Use this when you want to prove the automation path without deploying Activepieces yet.
+
+Terminal 1:
+
+```bash
+npm run automation:mock
+```
+
+The mock listens on:
+
+```text
+http://127.0.0.1:3010/webhook/reduos
+```
+
+Terminal 2:
+
+```bash
+npm run automation:enable:mock
+npm run demo:onboarding
+```
+
+`automation:enable:mock` is a convenience alias for `scripts/configure-automation-webhook.sh`. It writes these values to `.env` and recreates only the collector container:
+
+```env
+AUTOMATION_WEBHOOK_URL=http://host.containers.internal:3010/webhook/reduos
+AUTOMATION_WEBHOOK_API_KEY=local-demo-key
+```
+
+Expected event response:
+
+```json
+{
+  "automation": {
+    "sent": true,
+    "status": 200
+  },
+  "action_id": "uuid"
+}
+```
+
+The collector also stores an automatic row in `ai_actions`:
+
+```text
+action_type: trigger_automation_webhook
+status: completed
+target: activepieces
+```
+
+For the real Activepieces module, see [Activepieces Automation](./activepieces.md).
+
+For the real Uptime Kuma monitoring module, see [Uptime Kuma Monitoring](./uptime-kuma.md):
+
+```bash
+npm run modular:uptime:up
+```
+
+To test the full Activepieces workflow set after setup:
+
+```bash
+npm run demo:full
+```
+
+To test source-specific paths:
+
+```bash
+npm run demo:glitchtip
+npm run demo:listmonk
+npm run demo:umami
+npm run demo:uptime
+npm run demo:zammad
+```
+
+## Local Dashboard
+
+Start the dashboard:
+
+```bash
+npm run dashboard:auth:setup
+npm run dashboard
+```
+
+Open:
+
+```text
+http://127.0.0.1:3006
+```
+
+It shows recent events, AI insights, automation actions, service status, local stack links, memory search, and buttons for support, reliability, product, growth, Umami, Uptime Kuma, Listmonk, GlitchTip, Zammad, onboarding, and full demos.
+
+The dashboard is protected by Supabase Auth. Local defaults are generated into `.env`:
+
+```env
+DASHBOARD_AUTH_EMAIL=admin@example.com
+DASHBOARD_AUTH_PASSWORD=ChangeMeStrong123!
+```
+
+You can also see them with:
+
+```bash
+npm run status
+```
+
 ## Resetting Local Data
 
 The reset command is guarded because it deletes generated local runtime data.
@@ -438,6 +542,12 @@ curl -sS -X POST http://127.0.0.1:3005/v1/events/glitchtip \
   }' | jq
 ```
 
+One-command demo:
+
+```bash
+npm run demo:glitchtip
+```
+
 The normalizer turns this into:
 
 ```text
@@ -476,6 +586,27 @@ curl -sS -X POST http://127.0.0.1:3005/v1/events/zammad \
   }' | jq
 ```
 
+The smaller bridge payload used by `use-cases/zammad/to_use.sh` is also supported:
+
+```bash
+curl -sS -X POST http://127.0.0.1:3005/v1/events/zammad \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: ${COLLECTOR_API_KEY}" \
+  -d '{
+    "name": "Milos",
+    "email": "milos@example.com",
+    "title": "Server is down",
+    "message": "My server is down and I need help.",
+    "priority": "high"
+  }' | jq
+```
+
+One-command demo:
+
+```bash
+npm run demo:zammad
+```
+
 The normalizer turns this into:
 
 ```text
@@ -506,6 +637,12 @@ curl -sS -X POST http://127.0.0.1:3005/v1/events/uptime-kuma \
       "time": "2026-05-24T16:00:00Z"
     }
   }' | jq
+```
+
+One-command demo:
+
+```bash
+npm run demo:uptime
 ```
 
 The normalizer turns this into:
@@ -555,6 +692,36 @@ curl -sS -X POST http://127.0.0.1:3005/v1/events/umami \
     "event_name": "onboarding_abandoned",
     "email": "founder@example.com"
   }' | jq
+```
+
+The Umami `/api/send` style payload is also supported:
+
+```bash
+curl -sS -X POST http://127.0.0.1:3005/v1/events/umami \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: ${COLLECTOR_API_KEY}" \
+  -d '{
+    "type": "event",
+    "payload": {
+      "website": "demo-website-id",
+      "hostname": "redu-os.demo",
+      "referrer": "https://redu.cloud/pricing",
+      "title": "reduOS Dashboard",
+      "url": "/onboarding/create-instance",
+      "name": "onboarding_abandoned",
+      "data": {
+        "email": "founder@example.com",
+        "plan": "startup",
+        "step": "create_instance"
+      }
+    }
+  }' | jq
+```
+
+One-command demo:
+
+```bash
+npm run demo:umami
 ```
 
 The normalizer turns this into:

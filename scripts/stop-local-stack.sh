@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Stop the all-in-one local reduOS stack and local Supabase.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

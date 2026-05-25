@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Check local tools, ports, containers, services, models, and data tables.
 set -u
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -11,21 +12,21 @@ FAILURES=0
 WARNINGS=0
 
 ok() {
-  printf "  %-24s ok  %s\n" "$1" "${2:-}"
+  printf "  %-32s ok  %s\n" "$1" "${2:-}"
 }
 
 warn() {
   WARNINGS=$((WARNINGS + 1))
-  printf "  %-24s warn  %s\n" "$1" "$2"
+  printf "  %-32s warn  %s\n" "$1" "$2"
 }
 
 fail() {
   FAILURES=$((FAILURES + 1))
-  printf "  %-24s fail  %s\n" "$1" "$2"
+  printf "  %-32s fail  %s\n" "$1" "$2"
 }
 
 info() {
-  printf "  %-24s info  %s\n" "$1" "$2"
+  printf "  %-32s info  %s\n" "$1" "$2"
 }
 
 version_of() {
@@ -123,6 +124,10 @@ echo
 echo "Local files:"
 if [ -f "${ROOT_DIR}/.env" ]; then
   ok ".env" "present"
+  set -a
+  # shellcheck disable=SC1091
+  source "${ROOT_DIR}/.env"
+  set +a
 else
   warn ".env" "missing; run npm run stack:up"
 fi
@@ -164,6 +169,24 @@ check_container supabase-db
 check_container supabase-kong
 check_container supabase-studio
 
+if podman container exists redu-os-activepieces 2>/dev/null \
+  || podman container exists redu-os-activepieces-postgres 2>/dev/null \
+  || podman container exists redu-os-activepieces-redis 2>/dev/null; then
+  echo
+  echo "Optional Activepieces:"
+  check_container redu-os-activepieces
+  check_container redu-os-activepieces-postgres
+  check_container redu-os-activepieces-redis
+fi
+
+if podman container exists redu-os-uptime-kuma 2>/dev/null \
+  || podman container exists redu-os-uptime-kuma-mariadb 2>/dev/null; then
+  echo
+  echo "Optional Uptime Kuma:"
+  check_container redu-os-uptime-kuma
+  check_container redu-os-uptime-kuma-mariadb
+fi
+
 echo
 echo "Services:"
 if http_ok http://127.0.0.1:3005/health; then
@@ -188,6 +211,30 @@ if [ -n "${ANON_KEY:-}" ] && http_ok http://127.0.0.1:8000/rest/v1/ -H "apikey: 
   ok "supabase rest" "responding"
 else
   fail "supabase rest" "not responding or ANON_KEY missing"
+fi
+
+if podman container exists redu-os-activepieces 2>/dev/null; then
+  if http_ok "http://127.0.0.1:${ACTIVEPIECES_PORT:-8080}"; then
+    ok "activepieces" "responding"
+  else
+    warn "activepieces" "not responding"
+  fi
+
+  if podman exec redu-os-activepieces-postgres psql -U "${AP_POSTGRES_USERNAME:-activepieces}" \
+    -d "${AP_POSTGRES_DATABASE:-activepieces}" -tAc "SELECT extname FROM pg_extension WHERE extname = 'vector';" \
+    2>/dev/null | grep -q '^vector$'; then
+    ok "activepieces vector" "pgvector enabled"
+  else
+    warn "activepieces vector" "pgvector extension not enabled"
+  fi
+fi
+
+if podman container exists redu-os-uptime-kuma 2>/dev/null; then
+  if http_ok "http://127.0.0.1:${UPTIME_KUMA_PORT:-3001}"; then
+    ok "uptime kuma" "responding"
+  else
+    warn "uptime kuma" "not responding"
+  fi
 fi
 
 echo

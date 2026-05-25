@@ -108,6 +108,49 @@ Use `npm run doctor` to check local tools, ports, containers, APIs, models, Qdra
 
 Use `npm run status` for a compact container/URL view, and `npm run logs`, `npm run logs:collector`, `npm run logs:ollama`, `npm run logs:qdrant`, or `npm run logs:supabase` when you need logs.
 
+Use `npm run lint:scripts` to validate shell scripts. It runs `bash -n` everywhere and uses `shellcheck` automatically when installed.
+
+Use `npm run verify:fresh` before releases or handoff. It checks the fresh-clone path: required files, documented npm scripts, executable scripts, env examples, compose parsing, TypeScript, and obvious tracked secret leaks.
+
+To test webhook automation without Activepieces, run the local mock receiver:
+
+```bash
+npm run automation:mock
+npm run automation:enable:mock
+npm run demo:onboarding
+```
+
+The collector will POST each event and insight to the mock webhook and record an automatic `ai_actions` row.
+
+To run real Activepieces locally:
+
+```bash
+npm run modular:activepieces:up
+npm run activepieces:setup
+```
+
+`activepieces:setup` creates/signs in the local Activepieces owner, creates and publishes the reduOS webhook flow, writes the webhook URL/key into `.env`, and recreates the collector.
+
+To exercise the prebuilt use-case workflows:
+
+```bash
+npm run demo:full
+npm run demo:glitchtip
+npm run demo:listmonk
+npm run demo:umami
+npm run demo:uptime
+npm run demo:zammad
+```
+
+To use the local demo dashboard:
+
+```bash
+npm run dashboard:auth:setup
+npm run dashboard
+```
+
+Open `http://127.0.0.1:3006` and sign in with the dashboard credentials printed by `npm run dashboard:auth:setup` or `npm run status`. The dashboard uses Supabase Auth, then shows recent events, AI insights, automation actions, service health, memory search, and demo buttons for support, reliability, product, growth, Umami, Uptime Kuma, Listmonk, GlitchTip, and Zammad events.
+
 To reset generated local data, use the guarded reset command:
 
 ```bash
@@ -124,18 +167,26 @@ The smallest complete tier includes Supabase, Qdrant, Ollama/DeepSeek, and the c
 Modular service commands:
 
 ```bash
+npm run modular:local:up
+npm run modular:local:down
+
 npm run modular:collector:up
 npm run modular:qdrant:up
 npm run modular:ollama:up
+npm run modular:activepieces:up
+npm run modular:uptime:up
 ```
 
-Each also has `:status`, `:logs`, and `:down` variants. See [Modular VM Walkthrough](./docs/modular-vm-walkthrough.md).
+Use `modular:local:up` to run the exact same stack on one machine, but with Supabase, Qdrant, Ollama, and Collector started as separate modules. Individual services also have `:status`, `:logs`, and `:down` variants. See [Modular VM Walkthrough](./docs/modular-vm-walkthrough.md).
 
 ## Documentation
 
 - [Local Stack and Use Cases](./docs/local-stack-and-use-cases.md): one-command stack, service checks, curl examples, support/product/error/uptime/analytics scenarios, and troubleshooting.
 - [Deployment Modes](./docs/deployment-modes.md): smallest complete tier, modular split-VM tier, service contracts, network matrix, and rollout guidance.
 - [Modular VM Walkthrough](./docs/modular-vm-walkthrough.md): compose files and commands for running collector, Qdrant, and Ollama on separate VMs.
+- [Activepieces Automation](./docs/activepieces.md): run real Activepieces with PostgreSQL/Redis, create use-case workflows, and connect them to collector webhooks.
+- [Uptime Kuma Monitoring](./docs/uptime-kuma.md): run the optional monitoring module and watch the local/modular stack.
+- [Security](./SECURITY.md): local demo credentials, webhook handling, and production cautions.
 
 ## Build
 

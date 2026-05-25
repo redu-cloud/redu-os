@@ -1,0 +1,34 @@
+version: "3.8"
+
+services:
+  uptime-kuma:
+    image: docker.io/louislam/uptime-kuma:2
+    container_name: redu-os-uptime-kuma
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      UPTIME_KUMA_DB_TYPE: mariadb
+      UPTIME_KUMA_DB_HOSTNAME: uptime-kuma-mariadb
+      UPTIME_KUMA_DB_PORT: 3306
+      UPTIME_KUMA_DB_NAME: ${UPTIME_KUMA_DB_NAME:-uptime_kuma}
+      UPTIME_KUMA_DB_USERNAME: ${UPTIME_KUMA_DB_USERNAME:-uptime_kuma}
+      UPTIME_KUMA_DB_PASSWORD: ${UPTIME_KUMA_DB_PASSWORD}
+    ports:
+      - "${UPTIME_KUMA_PORT:-3001}:3001"
+    volumes:
+      - ../.local/uptime-kuma/data:/app/data
+    depends_on:
+      - uptime-kuma-mariadb
+
+  uptime-kuma-mariadb:
+    image: docker.io/library/mariadb:11
+    container_name: redu-os-uptime-kuma-mariadb
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: ${UPTIME_KUMA_DB_NAME:-uptime_kuma}
+      MARIADB_USER: ${UPTIME_KUMA_DB_USERNAME:-uptime_kuma}
+      MARIADB_PASSWORD: ${UPTIME_KUMA_DB_PASSWORD}
+      MARIADB_RANDOM_ROOT_PASSWORD: "yes"
+    volumes:
+      - ../.local/uptime-kuma/mariadb:/var/lib/mysql

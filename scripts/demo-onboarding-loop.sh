@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Run the onboarding support loop demo and record action/feedback rows.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

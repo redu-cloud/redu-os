@@ -28,6 +28,7 @@ npm run stack:up
 npm run doctor
 npm run demo:onboarding
 npm run demo:memory
+npm run demo:listmonk
 ```
 
 What this proves:
@@ -236,6 +237,32 @@ AUTOMATION_WEBHOOK_API_KEY=replace-with-webhook-key
 ```
 
 This can later point at Activepieces, a custom worker, or a small local mock receiver.
+
+For real Activepieces on the local/modular stack:
+
+```bash
+npm run modular:activepieces:up
+npm run modular:uptime:up
+```
+
+See [Activepieces Automation](./activepieces.md).
+See [Uptime Kuma Monitoring](./uptime-kuma.md).
+
+For a local mock receiver:
+
+```bash
+npm run automation:mock
+npm run automation:enable:mock
+```
+
+This sets:
+
+```env
+AUTOMATION_WEBHOOK_URL=http://host.containers.internal:3010/webhook/reduos
+AUTOMATION_WEBHOOK_API_KEY=local-demo-key
+```
+
+For non-mock receivers, use `npm run automation:enable` with `AUTOMATION_WEBHOOK_URL`, optional `AUTOMATION_WEBHOOK_URLS`, and `AUTOMATION_WEBHOOK_API_KEY`.
 
 ## Network Matrix
 

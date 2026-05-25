@@ -6,6 +6,7 @@ import { requireApiKey } from "./security.js";
 import {
   normalizeGeneric,
   normalizeGlitchTip,
+  normalizeListmonk,
   normalizeUmami,
   normalizeUptimeKuma,
   normalizeZammad
@@ -81,7 +82,7 @@ async function handleEvent(event: NormalizedEvent) {
   const automation = await triggerAutomation(stored, insight);
   let storedAction = null;
 
-  if (config.AUTOMATION_WEBHOOK_URL) {
+  if (config.AUTOMATION_WEBHOOK_URL || config.AUTOMATION_WEBHOOK_URLS) {
     try {
       storedAction = await storeAction({
         startup_event_id: stored.id,
@@ -140,6 +141,12 @@ app.post("/v1/events/uptime-kuma", async (request) => {
 app.post("/v1/events/umami", async (request) => {
   requireApiKey(request);
   const event = normalizeUmami(request.body);
+  return handleEvent(event);
+});
+
+app.post("/v1/events/listmonk", async (request) => {
+  requireApiKey(request);
+  const event = normalizeListmonk(request.body);
   return handleEvent(event);
 });
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Print logs for local stack containers, optionally following with FOLLOW=true.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -44,14 +45,24 @@ case "$TARGET" in
       print_logs "$name"
     done
     ;;
+  activepieces)
+    for name in redu-os-activepieces redu-os-activepieces-postgres redu-os-activepieces-redis; do
+      print_logs "$name"
+    done
+    ;;
+  uptime)
+    for name in redu-os-uptime-kuma redu-os-uptime-kuma-mariadb; do
+      print_logs "$name"
+    done
+    ;;
   all)
-    for name in redu-os-collector redu-os-qdrant redu-os-ollama supabase-kong supabase-studio supabase-db; do
+    for name in redu-os-collector redu-os-qdrant redu-os-ollama supabase-kong supabase-studio supabase-db redu-os-activepieces redu-os-uptime-kuma; do
       print_logs "$name"
     done
     ;;
   *)
     echo "Unknown log target: ${TARGET}" >&2
-    echo "Usage: npm run logs [all|collector|ollama|qdrant|supabase]" >&2
+    echo "Usage: npm run logs [all|collector|ollama|qdrant|supabase|activepieces|uptime]" >&2
     echo "Examples:" >&2
     echo "  npm run logs" >&2
     echo "  npm run logs:collector" >&2

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Prepare official Supabase self-hosting files and local reduOS .env values.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

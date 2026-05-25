@@ -12,6 +12,11 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+function firstRecord(value: unknown): Record<string, unknown> {
+  if (Array.isArray(value)) return asRecord(value[0]);
+  return asRecord(value);
+}
+
 function truncate(message: string): string {
   if (message.length <= config.MAX_EVENT_MESSAGE_LENGTH) return message;
   return message.slice(0, config.MAX_EVENT_MESSAGE_LENGTH) + "...[truncated]";
@@ -47,30 +52,63 @@ export function normalizeGeneric(payload: unknown): NormalizedEvent {
 export function normalizeGlitchTip(payload: unknown): NormalizedEvent {
   const p = asRecord(payload);
   const event = asRecord(p.event);
+  const projectPayload = asRecord(p.project);
+  const user = {
+    ...asRecord(event.user),
+    ...asRecord(p.user)
+  };
+  const request = {
+    ...asRecord(event.request),
+    ...asRecord(p.request)
+  };
+  const exception = firstRecord(asRecord(event.exception).values ?? asRecord(p.exception).values);
 
   const level = p.level ?? event.level;
-  const project = asString(p.project) ?? asString(event.project) ?? "unknown-project";
+  const project =
+    asString(p.project_name) ??
+    asString(projectPayload.name) ??
+    asString(projectPayload.slug) ??
+    asString(p.project) ??
+    asString(event.project) ??
+    "unknown-project";
+  const exceptionText = [asString(exception.type), asString(exception.value)]
+    .filter(Boolean)
+    .join(": ");
+  const transaction =
+    asString(event.transaction) ??
+    asString(p.transaction) ??
+    asString(event.culprit) ??
+    asString(p.culprit);
   const message =
-    asString(p.message) ??
-    asString(event.message) ??
-    asString(event.title) ??
-    asString(p.culprit) ??
+    exceptionText ||
+    asString(p.message) ||
+    asString(event.message) ||
+    asString(event.title) ||
+    transaction ||
     "GlitchTip event received";
 
   return {
     type: "error.created",
     source: "glitchtip",
     severity: severityFrom(level, "high"),
-    user_email: asString(asRecord(p.user).email) ?? null,
-    user_name: asString(asRecord(p.user).name) ?? null,
+    user_email: asString(user.email) ?? null,
+    user_name: asString(user.name) ?? asString(user.username) ?? null,
     message: truncate(message),
     metadata: {
       project,
       level,
+      exception_type: exception.type,
+      exception_value: exception.value,
+      transaction,
+      url: request.url,
+      method: request.method,
       culprit: p.culprit ?? event.culprit,
-      event_id: p.event_id ?? event.event_id,
-      release: event.release,
-      environment: event.environment,
+      event_id: p.event_id ?? event.event_id ?? event.id,
+      release: p.release ?? event.release,
+      environment: p.environment ?? event.environment,
+      platform: p.platform ?? event.platform,
+      tags: p.tags ?? event.tags,
+      fingerprint: p.fingerprint ?? event.fingerprint,
       raw: p
     }
   };
@@ -82,21 +120,22 @@ export function normalizeZammad(payload: unknown): NormalizedEvent {
   const customer = asRecord(p.customer);
   const article = asRecord(p.article);
 
-  const title = asString(ticket.title) ?? "Support ticket";
+  const title = asString(ticket.title) ?? asString(p.title) ?? "Support ticket";
   const body = asString(article.body) ?? asString(p.message) ?? "";
-  const priority = ticket.priority ?? ticket.priority_id;
+  const priority = ticket.priority ?? p.priority ?? ticket.priority_id;
 
   return {
     type: "support.ticket.created",
     source: "zammad",
     severity: severityFrom(priority, "medium"),
-    user_email: asString(customer.email) ?? asString(p.customer_email) ?? null,
-    user_name: asString(customer.name) ?? asString(p.customer_name) ?? null,
+    user_email: asString(customer.email) ?? asString(p.customer_email) ?? asString(p.email) ?? null,
+    user_name: asString(customer.name) ?? asString(p.customer_name) ?? asString(p.name) ?? null,
     message: truncate(body ? `${title}\n\n${body}` : title),
     metadata: {
       ticket_id: ticket.id ?? p.ticket_id,
       ticket_title: title,
       ticket_state: ticket.state,
+      article_id: article.id,
       priority,
       raw: p
     }
@@ -108,8 +147,27 @@ export function normalizeUptimeKuma(payload: unknown): NormalizedEvent {
   const heartbeat = asRecord(p.heartbeat);
   const monitor = asRecord(p.monitor);
 
-  const status = heartbeat.status;
-  const isDown = status === 0 || status === "0" || status === "down";
+  const status = heartbeat.status ?? p.status;
+  const statusText = asString(heartbeat.statusText) ?? asString(p.statusText);
+  const isDown =
+    status === 0 ||
+    status === "0" ||
+    String(status ?? statusText ?? "").toLowerCase() === "down";
+  const monitorName =
+    asString(monitor.name) ??
+    asString(p.monitor_name) ??
+    asString(p.name) ??
+    "Monitor";
+  const monitorUrl =
+    asString(monitor.url) ??
+    asString(p.monitor_url) ??
+    asString(p.url);
+  const message =
+    asString(heartbeat.msg) ??
+    asString(p.msg) ??
+    asString(p.message) ??
+    statusText ??
+    (isDown ? "down" : "recovered");
 
   return {
     type: isDown ? "uptime.monitor.down" : "uptime.monitor.recovered",
@@ -117,14 +175,13 @@ export function normalizeUptimeKuma(payload: unknown): NormalizedEvent {
     severity: isDown ? "critical" : "info",
     user_email: null,
     user_name: null,
-    message: truncate(
-      `${asString(monitor.name) ?? "Monitor"}: ${asString(heartbeat.msg) ?? (isDown ? "down" : "recovered")}`
-    ),
+    message: truncate(`${monitorName}: ${message}`),
     metadata: {
-      monitor_name: monitor.name,
-      monitor_url: monitor.url,
+      monitor_name: monitorName,
+      monitor_url: monitorUrl,
       status,
-      time: heartbeat.time,
+      status_text: statusText,
+      time: heartbeat.time ?? p.time,
       raw: p
     }
   };
@@ -132,24 +189,97 @@ export function normalizeUptimeKuma(payload: unknown): NormalizedEvent {
 
 export function normalizeUmami(payload: unknown): NormalizedEvent {
   const p = asRecord(payload);
+  const eventPayload = asRecord(p.payload);
+  const data = {
+    ...asRecord(eventPayload.data),
+    ...asRecord(p.data)
+  };
+  const eventName =
+    asString(p.event_name) ??
+    asString(eventPayload.name) ??
+    asString(p.name);
+  const url =
+    asString(p.url) ??
+    asString(eventPayload.url);
 
   return {
     type: "analytics.event",
     source: "umami",
     severity: "info",
-    user_email: asString(p.email) ?? null,
-    user_name: asString(p.name) ?? null,
+    user_email: asString(p.email) ?? asString(data.email) ?? null,
+    user_name: asString(p.user_name) ?? asString(data.name) ?? null,
     message: truncate(
-      asString(p.event_name) ??
-      asString(p.name) ??
-      asString(p.url) ??
+      eventName ??
+      url ??
       "Umami event received"
     ),
     metadata: {
-      hostname: p.hostname,
-      url: p.url,
-      referrer: p.referrer,
-      event_name: p.event_name ?? p.name,
+      hostname: p.hostname ?? eventPayload.hostname,
+      website: p.website ?? eventPayload.website,
+      url,
+      title: p.title ?? eventPayload.title,
+      referrer: p.referrer ?? eventPayload.referrer,
+      event_name: eventName,
+      data,
+      raw: p
+    }
+  };
+}
+
+export function normalizeListmonk(payload: unknown): NormalizedEvent {
+  const p = asRecord(payload);
+  const subscriber = asRecord(p.subscriber);
+  const list = asRecord(p.list);
+
+  const email =
+    asString(p.email) ??
+    asString(subscriber.email) ??
+    asString(asRecord(p.data).email);
+  const name =
+    asString(p.name) ??
+    asString(subscriber.name) ??
+    asString(asRecord(p.data).name);
+  const company =
+    asString(p.company) ??
+    asString(asRecord(subscriber.attribs).company) ??
+    asString(asRecord(p.attribs).company);
+  const signupSource =
+    asString(p.source) ??
+    asString(asRecord(subscriber.attribs).source) ??
+    asString(p.referrer) ??
+    "listmonk";
+  const listName =
+    asString(p.list_name) ??
+    asString(list.name) ??
+    asString(asRecord(p.list).list_name) ??
+    "waitlist";
+  const eventName =
+    asString(p.event) ??
+    asString(p.type) ??
+    "subscriber.created";
+
+  const companyText = company ? ` from ${company}` : "";
+  const sourceText = signupSource ? ` via ${signupSource}` : "";
+
+  return {
+    type: eventName.includes("unsubscribe") ? "audience.subscriber.unsubscribed" : "audience.subscriber.created",
+    source: "listmonk",
+    severity: eventName.includes("unsubscribe") ? "medium" : "info",
+    user_email: email ?? null,
+    user_name: name ?? null,
+    message: truncate(
+      email
+        ? `${name ?? "A new contact"}${companyText} joined ${listName}${sourceText}. Email: ${email}`
+        : `Listmonk ${eventName} event for ${listName}`
+    ),
+    metadata: {
+      list_name: listName,
+      list_uuid: p.list_uuid ?? list.uuid,
+      subscriber_id: p.subscriber_id ?? subscriber.id,
+      subscriber_uuid: p.subscriber_uuid ?? subscriber.uuid,
+      company,
+      signup_source: signupSource,
+      event: eventName,
       raw: p
     }
   };

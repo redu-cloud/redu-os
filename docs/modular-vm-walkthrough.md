@@ -15,12 +15,57 @@ VM 4: Ollama + DeepSeek
 
 The collector is the only service users and integrations need to call. Supabase, Qdrant, and Ollama can live on private IPs.
 
+## Same Machine Modular Mode
+
+If you want the exact same stack on one machine, but started as modules instead of one combined compose file:
+
+```bash
+npm run stack:down
+npm run modular:local:up
+```
+
+This starts:
+
+```text
+Supabase through the existing local Supabase bootstrap
+Qdrant through compose/qdrant.yml
+Ollama through compose/ollama.yml
+Collector through compose/collector.yml + compose/collector.same-machine.yml
+```
+
+The collector container uses host-reachable URLs for the other local modules:
+
+```text
+SUPABASE_URL=http://host.containers.internal:8000
+QDRANT_URL=http://host.containers.internal:6333
+OLLAMA_URL=http://host.containers.internal:11435
+```
+
+Verify:
+
+```bash
+npm run doctor
+npm run status
+npm run demo:onboarding
+npm run demo:memory
+npm run demo:listmonk
+```
+
+Stop:
+
+```bash
+npm run modular:local:down
+```
+
+Use this mode to prove the modular shape before copying services to separate VMs.
+
 ## Files
 
 Modular compose files:
 
 ```text
 compose/collector.yml
+compose/collector.same-machine.yml
 compose/qdrant.yml
 compose/ollama.yml
 ```

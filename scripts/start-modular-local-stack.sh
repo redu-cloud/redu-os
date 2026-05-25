@@ -1,21 +1,51 @@
 #!/usr/bin/env bash
-# Start the all-in-one local reduOS stack with Supabase, Qdrant, Ollama, and collector.
+# Start the same-machine modular stack using separate compose files per service.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOCAL_DIR="${ROOT_DIR}/.local"
 SUPABASE_DIR="${LOCAL_DIR}/supabase"
 SUPABASE_ENV="${LOCAL_DIR}/supabase-local.env"
+COMPOSE_DIR="${ROOT_DIR}/compose"
 
 # shellcheck disable=SC1091
 source "${ROOT_DIR}/scripts/podman-env.sh"
 
+wait_for() {
+  local label="$1"
+  local attempts="$2"
+  local sleep_seconds="$3"
+  shift 3
+
+  echo "Waiting for ${label}..."
+  for i in $(seq 1 "$attempts"); do
+    if "$@" >/dev/null 2>&1; then
+      echo "${label} is responding."
+      return 0
+    fi
+
+    if [ "$i" = "$attempts" ]; then
+      echo "${label} did not become ready in time." >&2
+      return 1
+    fi
+
+    sleep "$sleep_seconds"
+  done
+}
+
 "${ROOT_DIR}/scripts/supabase-local-bootstrap.sh"
+"${ROOT_DIR}/scripts/activepieces-env.sh"
 
 set -a
 # shellcheck disable=SC1090
 source "$SUPABASE_ENV"
+# shellcheck disable=SC1090
+source "${ROOT_DIR}/.env"
 set +a
+
+echo "Stopping combined local collector/Qdrant/Ollama stack if present..."
+cd "$ROOT_DIR"
+podman-compose -f podman-compose.yml down 2>/dev/null || true
 
 echo "Starting Supabase..."
 cd "$SUPABASE_DIR"
@@ -23,21 +53,9 @@ podman-compose --env-file .env down --remove-orphans 2>/dev/null || true
 podman-compose --env-file .env pull
 podman-compose --env-file .env up -d
 
-echo "Waiting for Supabase REST API..."
-for i in $(seq 1 180); do
-  if curl -fsS "http://127.0.0.1:${SUPABASE_KONG_HTTP_PORT}/rest/v1/" \
-    -H "apikey: ${ANON_KEY}" >/dev/null 2>&1; then
-    echo "Supabase REST API is responding."
-    break
-  fi
-
-  if [ "$i" = "180" ]; then
-    echo "Supabase REST API did not become ready in time." >&2
-    exit 1
-  fi
-
-  sleep 5
-done
+wait_for "Supabase REST API" 180 5 \
+  curl -fsS "http://127.0.0.1:${SUPABASE_KONG_HTTP_PORT}/rest/v1/" \
+  -H "apikey: ${ANON_KEY}"
 
 echo "Applying reduOS schema to Supabase..."
 DB_CONTAINER="$(podman ps --format '{{.Names}}' | grep -E '^supabase-db$' | head -n1 || true)"
@@ -51,41 +69,20 @@ podman cp "${ROOT_DIR}/sql/schema.sql" "${DB_CONTAINER}:/tmp/redu-os-schema.sql"
 podman exec -e PGPASSWORD="${POSTGRES_PASSWORD}" "$DB_CONTAINER" \
   psql -U postgres -d "${POSTGRES_DB}" -f /tmp/redu-os-schema.sql
 
-echo "Waiting for PostgREST schema cache..."
-for i in $(seq 1 60); do
-  if curl -fsS "${SUPABASE_PUBLIC_URL}/rest/v1/startup_events?select=id&limit=1" \
-    -H "apikey: ${SERVICE_ROLE_KEY}" \
-    -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" >/dev/null 2>&1; then
-    echo "PostgREST schema cache is ready."
-    break
-  fi
+wait_for "PostgREST schema cache" 60 2 \
+  curl -fsS "${SUPABASE_PUBLIC_URL}/rest/v1/startup_events?select=id&limit=1" \
+  -H "apikey: ${SERVICE_ROLE_KEY}" \
+  -H "Authorization: Bearer ${SERVICE_ROLE_KEY}"
 
-  if [ "$i" = "60" ]; then
-    echo "PostgREST schema cache did not become ready in time." >&2
-    exit 1
-  fi
+echo "Starting modular Qdrant..."
+cd "$COMPOSE_DIR"
+podman-compose -f qdrant.yml up -d
 
-  sleep 2
-done
+echo "Starting modular Ollama..."
+podman-compose -f ollama.yml up -d
 
-echo "Building and starting collector..."
-cd "$ROOT_DIR"
-podman-compose -f podman-compose.yml up -d --build
-
-echo "Waiting for Ollama..."
-for i in $(seq 1 90); do
-  if curl -fsS "http://127.0.0.1:${OLLAMA_PORT}/api/tags" >/dev/null 2>&1; then
-    echo "Ollama is responding."
-    break
-  fi
-
-  if [ "$i" = "90" ]; then
-    echo "Ollama did not become ready in time." >&2
-    exit 1
-  fi
-
-  sleep 2
-done
+wait_for "Ollama" 90 2 \
+  curl -fsS "http://127.0.0.1:${OLLAMA_PORT}/api/tags"
 
 echo "Pulling DeepSeek chat model..."
 for i in $(seq 1 5); do
@@ -128,36 +125,15 @@ if [ "$EMBED_SIZE" != "768" ]; then
   exit 1
 fi
 
-echo "Waiting for Qdrant..."
-for i in $(seq 1 60); do
-  if curl -fsS "http://127.0.0.1:6333/collections" \
-    -H "api-key: ${QDRANT_API_KEY}" >/dev/null 2>&1; then
-    echo "Qdrant is responding."
-    break
-  fi
+wait_for "Qdrant" 60 2 \
+  curl -fsS "http://127.0.0.1:${QDRANT_REST_PORT:-6333}/collections" \
+  -H "api-key: ${QDRANT_API_KEY}"
 
-  if [ "$i" = "60" ]; then
-    echo "Qdrant did not become ready in time." >&2
-    exit 1
-  fi
+echo "Building and starting modular collector..."
+podman-compose -f collector.yml -f collector.same-machine.yml up -d --build
 
-  sleep 2
-done
-
-echo "Waiting for collector health..."
-for i in $(seq 1 60); do
-  if curl -fsS "http://127.0.0.1:3005/health" >/dev/null 2>&1; then
-    echo "Collector is responding."
-    break
-  fi
-
-  if [ "$i" = "60" ]; then
-    echo "Collector did not become ready in time." >&2
-    exit 1
-  fi
-
-  sleep 2
-done
+wait_for "collector health" 60 2 \
+  curl -fsS "http://127.0.0.1:${COLLECTOR_PORT:-3005}/health"
 
 "${ROOT_DIR}/scripts/test-local-stack.sh"
 "${ROOT_DIR}/scripts/dashboard-auth-setup.sh"
@@ -167,14 +143,20 @@ source "${ROOT_DIR}/.env"
 set +a
 
 echo
-echo "Local reduOS stack is ready:"
-echo "  Collector: ${COLLECTOR_URL:-http://127.0.0.1:3005}"
+echo "Same-machine modular reduOS stack is ready:"
+echo "  Collector: http://127.0.0.1:${COLLECTOR_PORT:-3005}"
 echo "  Dashboard: http://127.0.0.1:${DASHBOARD_PORT:-3006} (run npm run dashboard)"
 echo "  Dashboard login: ${DASHBOARD_AUTH_EMAIL} / ${DASHBOARD_AUTH_PASSWORD}"
 echo "  Supabase API: ${SUPABASE_PUBLIC_URL}"
 echo "  Supabase Studio: ${SUPABASE_STUDIO_URL}"
-echo "  Qdrant: http://127.0.0.1:6333"
+echo "  Qdrant: http://127.0.0.1:${QDRANT_REST_PORT:-6333}"
 echo "  Ollama: http://127.0.0.1:${OLLAMA_PORT}"
 echo "  Model: ${OLLAMA_MODEL}"
 echo "  Studio login: ${DASHBOARD_USERNAME} / ${DASHBOARD_PASSWORD}"
+echo "  Activepieces: ${AP_FRONTEND_URL:-http://127.0.0.1:${ACTIVEPIECES_PORT:-8080}}"
+echo "  Activepieces login: ${AP_OWNER_EMAIL} / ${AP_OWNER_PASSWORD}"
+echo "  Activepieces setup: npm run modular:activepieces:up && npm run activepieces:setup"
+echo "  Uptime Kuma: npm run modular:uptime:up"
+echo "  Uptime Kuma login: ${UPTIME_KUMA_ADMIN_USERNAME:-admin} / ${UPTIME_KUMA_ADMIN_PASSWORD:-ChangeMeStrong123}"
 echo "  Local secrets: ${SUPABASE_ENV}"
+echo "  Project env: ${ROOT_DIR}/.env"

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Guarded reset for generated local runtime data.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -23,8 +24,8 @@ Modes:
         Keeps .local/ollama models and generated .env secrets.
 
   all   Stop the stack and remove all generated local stack data, including
-        Ollama models, generated Supabase files, Qdrant data, .env, and
-        .local/supabase-local.env.
+        Ollama models, generated Supabase files, Qdrant data, Activepieces
+        data, .env, and .local/supabase-local.env.
 EOF
 }
 
@@ -52,7 +53,7 @@ echo "Stopping local stack..."
 "${ROOT_DIR}/scripts/stop-local-stack.sh" >/dev/null 2>&1 || true
 
 echo "Removing stopped reduOS containers..."
-for name in redu-os-collector redu-os-qdrant redu-os-ollama; do
+for name in redu-os-collector redu-os-qdrant redu-os-ollama redu-os-activepieces redu-os-activepieces-postgres redu-os-activepieces-redis; do
   podman rm -f "$name" >/dev/null 2>&1 || true
 done
 
@@ -69,12 +70,15 @@ case "$RESET_MODE" in
     remove_path "${LOCAL_DIR}/supabase/volumes/db/data"
     remove_path "${LOCAL_DIR}/supabase/volumes/storage"
     remove_path "${LOCAL_DIR}/supabase/volumes/functions"
+    remove_path "${LOCAL_DIR}/activepieces/postgres"
+    remove_path "${LOCAL_DIR}/activepieces/redis"
     ;;
   all)
     remove_path "${ROOT_DIR}/.env"
     remove_path "${LOCAL_DIR}/supabase-local.env"
     remove_path "${LOCAL_DIR}/qdrant"
     remove_path "${LOCAL_DIR}/ollama"
+    remove_path "${LOCAL_DIR}/activepieces"
     remove_path "${LOCAL_DIR}/supabase"
     remove_path "${LOCAL_DIR}/supabase-src"
     ;;
