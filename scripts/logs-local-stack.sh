@@ -55,14 +55,29 @@ case "$TARGET" in
       print_logs "$name"
     done
     ;;
+  umami)
+    for name in redu-os-umami redu-os-umami-postgres; do
+      print_logs "$name"
+    done
+    ;;
+  glitchtip)
+    for name in redu-os-glitchtip redu-os-glitchtip-postgres redu-os-glitchtip-redis; do
+      print_logs "$name"
+    done
+    ;;
+  listmonk)
+    for name in redu-os-listmonk redu-os-listmonk-postgres; do
+      print_logs "$name"
+    done
+    ;;
   all)
-    for name in redu-os-collector redu-os-qdrant redu-os-ollama supabase-kong supabase-studio supabase-db redu-os-activepieces redu-os-uptime-kuma; do
+    for name in redu-os-collector redu-os-qdrant redu-os-ollama supabase-kong supabase-studio supabase-db redu-os-activepieces redu-os-uptime-kuma redu-os-umami redu-os-glitchtip redu-os-listmonk; do
       print_logs "$name"
     done
     ;;
   *)
     echo "Unknown log target: ${TARGET}" >&2
-    echo "Usage: npm run logs [all|collector|ollama|qdrant|supabase|activepieces|uptime]" >&2
+    echo "Usage: npm run logs [all|collector|ollama|qdrant|supabase|activepieces|uptime|umami|glitchtip|listmonk]" >&2
     echo "Examples:" >&2
     echo "  npm run logs" >&2
     echo "  npm run logs:collector" >&2

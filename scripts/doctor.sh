@@ -187,6 +187,32 @@ if podman container exists redu-os-uptime-kuma 2>/dev/null \
   check_container redu-os-uptime-kuma-mariadb
 fi
 
+if podman container exists redu-os-umami 2>/dev/null \
+  || podman container exists redu-os-umami-postgres 2>/dev/null; then
+  echo
+  echo "Optional Umami:"
+  check_container redu-os-umami
+  check_container redu-os-umami-postgres
+fi
+
+if podman container exists redu-os-glitchtip 2>/dev/null \
+  || podman container exists redu-os-glitchtip-postgres 2>/dev/null \
+  || podman container exists redu-os-glitchtip-redis 2>/dev/null; then
+  echo
+  echo "Optional GlitchTip:"
+  check_container redu-os-glitchtip
+  check_container redu-os-glitchtip-postgres
+  check_container redu-os-glitchtip-redis
+fi
+
+if podman container exists redu-os-listmonk 2>/dev/null \
+  || podman container exists redu-os-listmonk-postgres 2>/dev/null; then
+  echo
+  echo "Optional Listmonk:"
+  check_container redu-os-listmonk
+  check_container redu-os-listmonk-postgres
+fi
+
 echo
 echo "Services:"
 if http_ok http://127.0.0.1:3005/health; then
@@ -234,6 +260,30 @@ if podman container exists redu-os-uptime-kuma 2>/dev/null; then
     ok "uptime kuma" "responding"
   else
     warn "uptime kuma" "not responding"
+  fi
+fi
+
+if podman container exists redu-os-umami 2>/dev/null; then
+  if http_ok "http://127.0.0.1:${UMAMI_PORT:-3002}"; then
+    ok "umami" "responding"
+  else
+    warn "umami" "not responding"
+  fi
+fi
+
+if podman container exists redu-os-glitchtip 2>/dev/null; then
+  if http_ok "http://127.0.0.1:${GLITCHTIP_PORT:-8001}"; then
+    ok "glitchtip" "responding"
+  else
+    warn "glitchtip" "not responding"
+  fi
+fi
+
+if podman container exists redu-os-listmonk 2>/dev/null; then
+  if http_ok "http://127.0.0.1:${LISTMONK_PORT:-9000}"; then
+    ok "listmonk" "responding"
+  else
+    warn "listmonk" "not responding"
   fi
 fi
 

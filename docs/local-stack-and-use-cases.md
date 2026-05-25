@@ -178,6 +178,24 @@ For the real Uptime Kuma monitoring module, see [Uptime Kuma Monitoring](./uptim
 npm run modular:uptime:up
 ```
 
+For the real Umami analytics module, see [Umami Analytics](./umami.md):
+
+```bash
+npm run modular:umami:up
+```
+
+For the real GlitchTip error tracking module, see [GlitchTip Errors](./glitchtip.md):
+
+```bash
+npm run modular:glitchtip:up
+```
+
+For the real Listmonk audience module, see [Listmonk Audience](./listmonk.md):
+
+```bash
+npm run modular:listmonk:up
+```
+
 To test the full Activepieces workflow set after setup:
 
 ```bash

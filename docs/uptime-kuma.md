@@ -9,7 +9,7 @@ npm run modular:uptime:up
 npm run modular:uptime:status
 ```
 
-`modular:uptime:up` starts MariaDB, starts Uptime Kuma, creates the owner account, and prints the login.
+`modular:uptime:up` starts MariaDB, starts Uptime Kuma, creates the owner account, creates the default stack monitors, and prints the login.
 
 Open:
 
@@ -39,7 +39,7 @@ Runtime data is stored in:
 
 ## Suggested Local Monitors
 
-Create HTTP monitors for:
+The setup command creates HTTP monitors for:
 
 ```text
 Collector        http://host.containers.internal:3005/health
@@ -50,16 +50,28 @@ Ollama           http://host.containers.internal:11435/api/tags
 Activepieces     http://host.containers.internal:8080
 ```
 
-If a target requires headers, add them in the monitor settings. Qdrant may require:
+It also adds headers when local secrets are available. Qdrant may receive:
 
 ```text
 api-key: your-qdrant-api-key
 ```
 
-Supabase REST may require:
+Supabase REST may receive:
 
 ```text
 apikey: your-supabase-anon-key
+```
+
+The monitor setup is idempotent. Rerunning this command skips monitors that already exist by name:
+
+```bash
+npm run uptime:setup
+```
+
+To skip default monitor creation:
+
+```env
+UPTIME_KUMA_CREATE_MONITORS=false
 ```
 
 ## Send A reduOS Test Event

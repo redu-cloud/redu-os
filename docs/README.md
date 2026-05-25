@@ -7,5 +7,8 @@ Start here:
 - [Modular VM Walkthrough](./modular-vm-walkthrough.md)
 - [Activepieces Automation](./activepieces.md)
 - [Uptime Kuma Monitoring](./uptime-kuma.md)
+- [Umami Analytics](./umami.md)
+- [GlitchTip Errors](./glitchtip.md)
+- [Listmonk Audience](./listmonk.md)
 
-The local stack guide covers Supabase, Qdrant, Ollama/DeepSeek, the collector API, curl examples, data inspection, and troubleshooting. The deployment modes guide explains the smallest complete tier and modular split-VM tier. The modular walkthrough gives runnable per-VM commands. The Activepieces guide explains real webhook automation.
+The local stack guide covers Supabase, Qdrant, Ollama/DeepSeek, the collector API, curl examples, data inspection, and troubleshooting. The deployment modes guide explains the smallest complete tier and modular split-VM tier. The modular walkthrough gives runnable per-VM commands. The Activepieces guide explains real webhook automation. The optional app guides cover monitoring, analytics, and error tracking modules.

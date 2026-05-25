@@ -63,7 +63,14 @@ if podman container exists redu-os-activepieces 2>/dev/null \
   || podman container exists redu-os-activepieces-postgres 2>/dev/null \
   || podman container exists redu-os-activepieces-redis 2>/dev/null \
   || podman container exists redu-os-uptime-kuma 2>/dev/null \
-  || podman container exists redu-os-uptime-kuma-mariadb 2>/dev/null; then
+  || podman container exists redu-os-uptime-kuma-mariadb 2>/dev/null \
+  || podman container exists redu-os-umami 2>/dev/null \
+  || podman container exists redu-os-umami-postgres 2>/dev/null \
+  || podman container exists redu-os-glitchtip 2>/dev/null \
+  || podman container exists redu-os-glitchtip-postgres 2>/dev/null \
+  || podman container exists redu-os-glitchtip-redis 2>/dev/null \
+  || podman container exists redu-os-listmonk 2>/dev/null \
+  || podman container exists redu-os-listmonk-postgres 2>/dev/null; then
   echo
   echo "Optional modules:"
   if podman container exists redu-os-activepieces 2>/dev/null \
@@ -77,6 +84,23 @@ if podman container exists redu-os-activepieces 2>/dev/null \
     || podman container exists redu-os-uptime-kuma-mariadb 2>/dev/null; then
     container_status redu-os-uptime-kuma "${UPTIME_KUMA_PORT:-3001}"
     container_status redu-os-uptime-kuma-mariadb ""
+  fi
+  if podman container exists redu-os-umami 2>/dev/null \
+    || podman container exists redu-os-umami-postgres 2>/dev/null; then
+    container_status redu-os-umami "${UMAMI_PORT:-3002}"
+    container_status redu-os-umami-postgres ""
+  fi
+  if podman container exists redu-os-glitchtip 2>/dev/null \
+    || podman container exists redu-os-glitchtip-postgres 2>/dev/null \
+    || podman container exists redu-os-glitchtip-redis 2>/dev/null; then
+    container_status redu-os-glitchtip "${GLITCHTIP_PORT:-8001}"
+    container_status redu-os-glitchtip-postgres ""
+    container_status redu-os-glitchtip-redis ""
+  fi
+  if podman container exists redu-os-listmonk 2>/dev/null \
+    || podman container exists redu-os-listmonk-postgres 2>/dev/null; then
+    container_status redu-os-listmonk "${LISTMONK_PORT:-9000}"
+    container_status redu-os-listmonk-postgres ""
   fi
 fi
 
@@ -93,6 +117,15 @@ fi
 if podman container exists redu-os-uptime-kuma 2>/dev/null; then
   service_health "Uptime Kuma" "http://127.0.0.1:${UPTIME_KUMA_PORT:-3001}"
 fi
+if podman container exists redu-os-umami 2>/dev/null; then
+  service_health "Umami" "http://127.0.0.1:${UMAMI_PORT:-3002}"
+fi
+if podman container exists redu-os-glitchtip 2>/dev/null; then
+  service_health "GlitchTip" "http://127.0.0.1:${GLITCHTIP_PORT:-8001}"
+fi
+if podman container exists redu-os-listmonk 2>/dev/null; then
+  service_health "Listmonk" "http://127.0.0.1:${LISTMONK_PORT:-9000}"
+fi
 
 echo
 echo "URLs:"
@@ -104,6 +137,9 @@ printf "  %-32s %s\n" "Qdrant" "http://127.0.0.1:6333"
 printf "  %-32s %s\n" "Ollama" "http://127.0.0.1:${OLLAMA_PORT:-11435}"
 printf "  %-32s %s\n" "Activepieces" "${AP_FRONTEND_URL:-http://127.0.0.1:${ACTIVEPIECES_PORT:-8080}}"
 printf "  %-32s %s\n" "Uptime Kuma" "${UPTIME_KUMA_URL:-http://127.0.0.1:${UPTIME_KUMA_PORT:-3001}}"
+printf "  %-32s %s\n" "Umami" "${UMAMI_URL:-http://127.0.0.1:${UMAMI_PORT:-3002}}"
+printf "  %-32s %s\n" "GlitchTip" "${GLITCHTIP_URL:-http://127.0.0.1:${GLITCHTIP_PORT:-8001}}"
+printf "  %-32s %s\n" "Listmonk" "${LISTMONK_URL:-http://127.0.0.1:${LISTMONK_PORT:-9000}}"
 
 if [ -n "${DASHBOARD_AUTH_EMAIL:-}" ] && [ -n "${DASHBOARD_AUTH_PASSWORD:-}" ]; then
   echo
@@ -124,4 +160,25 @@ if [ -n "${UPTIME_KUMA_ADMIN_USERNAME:-}" ] && [ -n "${UPTIME_KUMA_ADMIN_PASSWOR
   echo "Uptime Kuma login:"
   printf "  %-32s %s\n" "username" "$UPTIME_KUMA_ADMIN_USERNAME"
   printf "  %-32s %s\n" "password" "$UPTIME_KUMA_ADMIN_PASSWORD"
+fi
+
+if [ -n "${UMAMI_ADMIN_USERNAME:-}" ] && [ -n "${UMAMI_ADMIN_PASSWORD:-}" ]; then
+  echo
+  echo "Umami login:"
+  printf "  %-32s %s\n" "username" "$UMAMI_ADMIN_USERNAME"
+  printf "  %-32s %s\n" "password" "$UMAMI_ADMIN_PASSWORD"
+fi
+
+if [ -n "${GLITCHTIP_ADMIN_EMAIL:-}" ] && [ -n "${GLITCHTIP_ADMIN_PASSWORD:-}" ]; then
+  echo
+  echo "GlitchTip login:"
+  printf "  %-32s %s\n" "email" "$GLITCHTIP_ADMIN_EMAIL"
+  printf "  %-32s %s\n" "password" "$GLITCHTIP_ADMIN_PASSWORD"
+fi
+
+if [ -n "${LISTMONK_ADMIN_USERNAME:-}" ] && [ -n "${LISTMONK_ADMIN_PASSWORD:-}" ]; then
+  echo
+  echo "Listmonk login:"
+  printf "  %-32s %s\n" "username" "$LISTMONK_ADMIN_USERNAME"
+  printf "  %-32s %s\n" "password" "$LISTMONK_ADMIN_PASSWORD"
 fi

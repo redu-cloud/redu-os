@@ -1,0 +1,30 @@
+version: "3.8"
+
+services:
+  umami:
+    image: ghcr.io/umami-software/umami:postgresql-latest
+    container_name: redu-os-umami
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgresql://${UMAMI_POSTGRES_USERNAME:-umami}:${UMAMI_POSTGRES_PASSWORD}@umami-postgres:5432/${UMAMI_POSTGRES_DATABASE:-umami}
+      DATABASE_TYPE: postgresql
+      APP_SECRET: ${UMAMI_APP_SECRET}
+      TRACKER_SCRIPT_NAME: script.js
+      PORT: 3000
+    ports:
+      - "${UMAMI_PORT:-3002}:3000"
+    depends_on:
+      - umami-postgres
+
+  umami-postgres:
+    image: docker.io/library/postgres:15-alpine
+    container_name: redu-os-umami-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${UMAMI_POSTGRES_DATABASE:-umami}
+      POSTGRES_USER: ${UMAMI_POSTGRES_USERNAME:-umami}
+      POSTGRES_PASSWORD: ${UMAMI_POSTGRES_PASSWORD}
+    volumes:
+      - ../.local/umami/postgres:/var/lib/postgresql/data

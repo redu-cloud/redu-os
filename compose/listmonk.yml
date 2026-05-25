@@ -1,0 +1,34 @@
+version: "3.8"
+
+services:
+  listmonk:
+    image: ${LISTMONK_IMAGE:-docker.io/listmonk/listmonk:latest}
+    container_name: redu-os-listmonk
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      LISTMONK_ADMIN_USER: ${LISTMONK_ADMIN_USERNAME:-admin}
+      LISTMONK_ADMIN_PASSWORD: ${LISTMONK_ADMIN_PASSWORD:-ChangeMeStrong123}
+    command:
+      - sh
+      - -c
+      - ./listmonk --config /listmonk/config.toml
+    ports:
+      - "${LISTMONK_PORT:-9000}:9000"
+    volumes:
+      - ../.local/listmonk/config.toml:/listmonk/config.toml:ro
+      - ../.local/listmonk/uploads:/listmonk/uploads
+    depends_on:
+      - listmonk-postgres
+
+  listmonk-postgres:
+    image: docker.io/library/postgres:16-alpine
+    container_name: redu-os-listmonk-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${LISTMONK_POSTGRES_DATABASE:-listmonk}
+      POSTGRES_USER: ${LISTMONK_POSTGRES_USERNAME:-listmonk}
+      POSTGRES_PASSWORD: ${LISTMONK_POSTGRES_PASSWORD}
+    volumes:
+      - ../.local/listmonk/postgres:/var/lib/postgresql/data

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate missing local Uptime Kuma settings in .env.
+# Generate missing local Umami settings in .env.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -55,21 +55,24 @@ ensure_env() {
   local current
 
   current="$(get_env "$key")"
-  if [ -z "$current" ] || [[ "$current" == replace-* ]]; then
+  if [ -z "$current" ] || [[ "$current" == replace-* ]] || { [ "$key" = "UMAMI_WEBSITE_NAME" ] && [[ "$current" =~ [[:space:]] ]]; }; then
     set_env "$key" "$value"
   fi
 }
 
-ensure_env "UPTIME_KUMA_PORT" "3001"
-ensure_env "UPTIME_KUMA_URL" "http://127.0.0.1:3001"
-ensure_env "UPTIME_KUMA_ADMIN_USERNAME" "admin"
-ensure_env "UPTIME_KUMA_ADMIN_PASSWORD" "ChangeMeStrong123"
-ensure_env "UPTIME_KUMA_CREATE_MONITORS" "true"
-ensure_env "UPTIME_KUMA_DB_NAME" "uptime_kuma"
-ensure_env "UPTIME_KUMA_DB_USERNAME" "uptime_kuma"
-ensure_env "UPTIME_KUMA_DB_PASSWORD" "$(generate_hex 32)"
+ensure_env "UMAMI_PORT" "3002"
+ensure_env "UMAMI_URL" "http://127.0.0.1:3002"
+ensure_env "UMAMI_ADMIN_USERNAME" "admin"
+ensure_env "UMAMI_OLD_ADMIN_PASSWORD" "umami"
+ensure_env "UMAMI_ADMIN_PASSWORD" "ChangeMeStrong123"
+ensure_env "UMAMI_WEBSITE_NAME" "reduOS-Demo"
+ensure_env "UMAMI_WEBSITE_DOMAIN" "redu-os.local"
+ensure_env "UMAMI_POSTGRES_DATABASE" "umami"
+ensure_env "UMAMI_POSTGRES_USERNAME" "umami"
+ensure_env "UMAMI_POSTGRES_PASSWORD" "$(generate_hex 32)"
+ensure_env "UMAMI_APP_SECRET" "$(generate_hex 32)"
 
-echo "Uptime Kuma env is ready in .env"
-echo "  UPTIME_KUMA_URL=$(get_env UPTIME_KUMA_URL)"
-echo "  UPTIME_KUMA_PORT=$(get_env UPTIME_KUMA_PORT)"
-echo "  UPTIME_KUMA_ADMIN_USERNAME=$(get_env UPTIME_KUMA_ADMIN_USERNAME)"
+echo "Umami env is ready in .env"
+echo "  UMAMI_URL=$(get_env UMAMI_URL)"
+echo "  UMAMI_PORT=$(get_env UMAMI_PORT)"
+echo "  UMAMI_ADMIN_USERNAME=$(get_env UMAMI_ADMIN_USERNAME)"

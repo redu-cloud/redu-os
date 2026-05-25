@@ -53,7 +53,7 @@ echo "Stopping local stack..."
 "${ROOT_DIR}/scripts/stop-local-stack.sh" >/dev/null 2>&1 || true
 
 echo "Removing stopped reduOS containers..."
-for name in redu-os-collector redu-os-qdrant redu-os-ollama redu-os-activepieces redu-os-activepieces-postgres redu-os-activepieces-redis; do
+for name in redu-os-collector redu-os-qdrant redu-os-ollama redu-os-activepieces redu-os-activepieces-postgres redu-os-activepieces-redis redu-os-uptime-kuma redu-os-uptime-kuma-mariadb redu-os-umami redu-os-umami-postgres redu-os-glitchtip redu-os-glitchtip-postgres redu-os-glitchtip-redis redu-os-listmonk redu-os-listmonk-postgres; do
   podman rm -f "$name" >/dev/null 2>&1 || true
 done
 
@@ -72,6 +72,13 @@ case "$RESET_MODE" in
     remove_path "${LOCAL_DIR}/supabase/volumes/functions"
     remove_path "${LOCAL_DIR}/activepieces/postgres"
     remove_path "${LOCAL_DIR}/activepieces/redis"
+    remove_path "${LOCAL_DIR}/glitchtip/postgres"
+    remove_path "${LOCAL_DIR}/glitchtip/redis"
+    remove_path "${LOCAL_DIR}/glitchtip/uploads"
+    remove_path "${LOCAL_DIR}/listmonk/postgres"
+    remove_path "${LOCAL_DIR}/listmonk/uploads"
+    remove_path "${LOCAL_DIR}/listmonk/.installed"
+    remove_path "${LOCAL_DIR}/listmonk/list.env"
     ;;
   all)
     remove_path "${ROOT_DIR}/.env"
@@ -79,6 +86,10 @@ case "$RESET_MODE" in
     remove_path "${LOCAL_DIR}/qdrant"
     remove_path "${LOCAL_DIR}/ollama"
     remove_path "${LOCAL_DIR}/activepieces"
+    remove_path "${LOCAL_DIR}/uptime-kuma"
+    remove_path "${LOCAL_DIR}/umami"
+    remove_path "${LOCAL_DIR}/glitchtip"
+    remove_path "${LOCAL_DIR}/listmonk"
     remove_path "${LOCAL_DIR}/supabase"
     remove_path "${LOCAL_DIR}/supabase-src"
     ;;

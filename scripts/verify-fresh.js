@@ -170,8 +170,12 @@ function checkDocScripts(packageJson) {
     "docs/README.md",
     "docs/activepieces.md",
     "docs/deployment-modes.md",
+    "docs/glitchtip.md",
+    "docs/listmonk.md",
     "docs/local-stack-and-use-cases.md",
-    "docs/modular-vm-walkthrough.md"
+    "docs/modular-vm-walkthrough.md",
+    "docs/umami.md",
+    "docs/uptime-kuma.md"
   ];
   const referenced = extractNpmScriptsFromDocs(docFiles);
   const missing = referenced.filter((script) => !packageJson.scripts?.[script]);
@@ -194,7 +198,13 @@ function checkPackageScripts(packageJson) {
     "modular:local:up",
     "modular:activepieces:up",
     "modular:uptime:up",
+    "modular:umami:up",
+    "modular:glitchtip:up",
+    "modular:listmonk:up",
     "activepieces:setup",
+    "umami:setup",
+    "glitchtip:setup",
+    "listmonk:setup",
     "dashboard",
     "dashboard:auth:setup",
     "demo:full",
@@ -218,7 +228,10 @@ function checkComposeFiles() {
     "compose/qdrant.yml",
     "compose/ollama.yml",
     "compose/activepieces.yml",
-    "compose/uptime.yml"
+    "compose/uptime.yml",
+    "compose/umami.yml",
+    "compose/glitchtip.yml",
+    "compose/listmonk.yml"
   ];
 
   for (const file of composeFiles) requireFile(file);
@@ -250,6 +263,7 @@ function checkSecretPatterns(files) {
     /YOUR_[A-Z_]+_HERE/,
     /AUTO_GENERATE/,
     /\$\{?[A-Z0-9_]+\}?/,
+    /process\.env\.[A-Z0-9_]+/,
     /local-demo-key/,
     /admin@example\.com/,
     /founder@example\.com/,

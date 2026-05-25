@@ -25,6 +25,9 @@ Usage:
   npm run modular:ollama:up
   npm run modular:activepieces:up
   npm run modular:uptime:up
+  npm run modular:umami:up
+  npm run modular:glitchtip:up
+  npm run modular:listmonk:up
   bash scripts/modular-service.sh collector up
   bash scripts/modular-service.sh qdrant logs
 
@@ -34,6 +37,9 @@ Services:
   ollama
   activepieces
   uptime
+  umami
+  glitchtip
+  listmonk
 
 Actions:
   up
@@ -51,7 +57,7 @@ if [ -z "$SERVICE" ] || [ "$SERVICE" = "-h" ] || [ "$SERVICE" = "--help" ]; then
 fi
 
 case "$SERVICE" in
-  collector|qdrant|ollama|activepieces|uptime) ;;
+  collector|qdrant|ollama|activepieces|uptime|umami|glitchtip|listmonk) ;;
   *)
     echo "Unknown modular service: ${SERVICE}" >&2
     usage >&2
@@ -88,8 +94,34 @@ case "$ACTION" in
       source "${ROOT_DIR}/.env"
       set +a
     fi
+    if [ "$SERVICE" = "umami" ]; then
+      "${ROOT_DIR}/scripts/umami-env.sh"
+      set -a
+      # shellcheck disable=SC1091
+      source "${ROOT_DIR}/.env"
+      set +a
+    fi
+    if [ "$SERVICE" = "glitchtip" ]; then
+      "${ROOT_DIR}/scripts/glitchtip-env.sh"
+      set -a
+      # shellcheck disable=SC1091
+      source "${ROOT_DIR}/.env"
+      set +a
+    fi
+    if [ "$SERVICE" = "listmonk" ]; then
+      "${ROOT_DIR}/scripts/listmonk-env.sh"
+      set -a
+      # shellcheck disable=SC1091
+      source "${ROOT_DIR}/.env"
+      set +a
+    fi
 
-    if [ "$SERVICE" = "collector" ]; then
+    if [ "$SERVICE" = "listmonk" ]; then
+      podman-compose -f "$COMPOSE_FILE" up -d listmonk-postgres
+      "${ROOT_DIR}/scripts/setup-listmonk.sh"
+      podman-compose -f "$COMPOSE_FILE" up -d listmonk
+      "${ROOT_DIR}/scripts/setup-listmonk.sh"
+    elif [ "$SERVICE" = "collector" ]; then
       podman-compose -f "$COMPOSE_FILE" up -d --build
     else
       podman-compose -f "$COMPOSE_FILE" up -d
@@ -97,6 +129,12 @@ case "$ACTION" in
 
     if [ "$SERVICE" = "uptime" ]; then
       "${ROOT_DIR}/scripts/setup-uptime-kuma.sh"
+    fi
+    if [ "$SERVICE" = "umami" ]; then
+      "${ROOT_DIR}/scripts/setup-umami.sh"
+    fi
+    if [ "$SERVICE" = "glitchtip" ]; then
+      "${ROOT_DIR}/scripts/setup-glitchtip.sh"
     fi
     ;;
   down)
@@ -117,9 +155,35 @@ case "$ACTION" in
       source "${ROOT_DIR}/.env"
       set +a
     fi
+    if [ "$SERVICE" = "umami" ]; then
+      "${ROOT_DIR}/scripts/umami-env.sh"
+      set -a
+      # shellcheck disable=SC1091
+      source "${ROOT_DIR}/.env"
+      set +a
+    fi
+    if [ "$SERVICE" = "glitchtip" ]; then
+      "${ROOT_DIR}/scripts/glitchtip-env.sh"
+      set -a
+      # shellcheck disable=SC1091
+      source "${ROOT_DIR}/.env"
+      set +a
+    fi
+    if [ "$SERVICE" = "listmonk" ]; then
+      "${ROOT_DIR}/scripts/listmonk-env.sh"
+      set -a
+      # shellcheck disable=SC1091
+      source "${ROOT_DIR}/.env"
+      set +a
+    fi
 
     podman-compose -f "$COMPOSE_FILE" down
-    if [ "$SERVICE" = "collector" ]; then
+    if [ "$SERVICE" = "listmonk" ]; then
+      podman-compose -f "$COMPOSE_FILE" up -d listmonk-postgres
+      "${ROOT_DIR}/scripts/setup-listmonk.sh"
+      podman-compose -f "$COMPOSE_FILE" up -d listmonk
+      "${ROOT_DIR}/scripts/setup-listmonk.sh"
+    elif [ "$SERVICE" = "collector" ]; then
       podman-compose -f "$COMPOSE_FILE" up -d --build
     else
       podman-compose -f "$COMPOSE_FILE" up -d
@@ -127,6 +191,12 @@ case "$ACTION" in
 
     if [ "$SERVICE" = "uptime" ]; then
       "${ROOT_DIR}/scripts/setup-uptime-kuma.sh"
+    fi
+    if [ "$SERVICE" = "umami" ]; then
+      "${ROOT_DIR}/scripts/setup-umami.sh"
+    fi
+    if [ "$SERVICE" = "glitchtip" ]; then
+      "${ROOT_DIR}/scripts/setup-glitchtip.sh"
     fi
     ;;
   status)
@@ -151,6 +221,36 @@ case "$ACTION" in
       done
     elif [ "$SERVICE" = "uptime" ]; then
       for name in redu-os-uptime-kuma redu-os-uptime-kuma-mariadb; do
+        echo
+        echo "==> ${name}"
+        if podman container exists "$name" 2>/dev/null; then
+          podman logs --tail "${TAIL:-150}" "$name"
+        else
+          echo "${name} is not present"
+        fi
+      done
+    elif [ "$SERVICE" = "umami" ]; then
+      for name in redu-os-umami redu-os-umami-postgres; do
+        echo
+        echo "==> ${name}"
+        if podman container exists "$name" 2>/dev/null; then
+          podman logs --tail "${TAIL:-150}" "$name"
+        else
+          echo "${name} is not present"
+        fi
+      done
+    elif [ "$SERVICE" = "glitchtip" ]; then
+      for name in redu-os-glitchtip redu-os-glitchtip-postgres redu-os-glitchtip-redis; do
+        echo
+        echo "==> ${name}"
+        if podman container exists "$name" 2>/dev/null; then
+          podman logs --tail "${TAIL:-150}" "$name"
+        else
+          echo "${name} is not present"
+        fi
+      done
+    elif [ "$SERVICE" = "listmonk" ]; then
+      for name in redu-os-listmonk redu-os-listmonk-postgres; do
         echo
         echo "==> ${name}"
         if podman container exists "$name" 2>/dev/null; then

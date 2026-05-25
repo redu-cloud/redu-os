@@ -243,10 +243,16 @@ For real Activepieces on the local/modular stack:
 ```bash
 npm run modular:activepieces:up
 npm run modular:uptime:up
+npm run modular:umami:up
+npm run modular:glitchtip:up
+npm run modular:listmonk:up
 ```
 
 See [Activepieces Automation](./activepieces.md).
 See [Uptime Kuma Monitoring](./uptime-kuma.md).
+See [Umami Analytics](./umami.md).
+See [GlitchTip Errors](./glitchtip.md).
+See [Listmonk Audience](./listmonk.md).
 
 For a local mock receiver:
 
