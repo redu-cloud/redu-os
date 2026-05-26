@@ -70,14 +70,24 @@ case "$TARGET" in
       print_logs "$name"
     done
     ;;
+  zammad)
+    for name in zammad_zammad-nginx_1 zammad_zammad-railsserver_1 zammad_zammad-scheduler_1 zammad_zammad-websocket_1 zammad_zammad-postgresql_1 zammad_zammad-redis_1 zammad_zammad-memcached_1; do
+      print_logs "$name"
+    done
+    ;;
+  langfuse)
+    for name in redu-os-langfuse-web redu-os-langfuse-worker redu-os-langfuse-postgres redu-os-langfuse-clickhouse redu-os-langfuse-minio redu-os-langfuse-redis; do
+      print_logs "$name"
+    done
+    ;;
   all)
-    for name in redu-os-collector redu-os-qdrant redu-os-ollama supabase-kong supabase-studio supabase-db redu-os-activepieces redu-os-uptime-kuma redu-os-umami redu-os-glitchtip redu-os-listmonk; do
+    for name in redu-os-collector redu-os-qdrant redu-os-ollama supabase-kong supabase-studio supabase-db redu-os-activepieces redu-os-uptime-kuma redu-os-umami redu-os-glitchtip redu-os-listmonk zammad_zammad-nginx_1 zammad_zammad-railsserver_1 redu-os-langfuse-web redu-os-langfuse-worker; do
       print_logs "$name"
     done
     ;;
   *)
     echo "Unknown log target: ${TARGET}" >&2
-    echo "Usage: npm run logs [all|collector|ollama|qdrant|supabase|activepieces|uptime|umami|glitchtip|listmonk]" >&2
+    echo "Usage: npm run logs [all|collector|ollama|qdrant|supabase|activepieces|uptime|umami|glitchtip|listmonk|zammad|langfuse]" >&2
     echo "Examples:" >&2
     echo "  npm run logs" >&2
     echo "  npm run logs:collector" >&2

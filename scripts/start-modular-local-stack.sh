@@ -35,11 +35,14 @@ wait_for() {
 
 "${ROOT_DIR}/scripts/supabase-local-bootstrap.sh"
 "${ROOT_DIR}/scripts/activepieces-env.sh"
+if [ -f "${ROOT_DIR}/.local/langfuse-local.env" ]; then
+  "${ROOT_DIR}/scripts/langfuse-env.sh"
+fi
 
 set -a
 # shellcheck disable=SC1090
 source "$SUPABASE_ENV"
-# shellcheck disable=SC1090
+# shellcheck disable=SC1091
 source "${ROOT_DIR}/.env"
 set +a
 
@@ -138,7 +141,7 @@ wait_for "collector health" 60 2 \
 "${ROOT_DIR}/scripts/test-local-stack.sh"
 "${ROOT_DIR}/scripts/dashboard-auth-setup.sh"
 set -a
-# shellcheck disable=SC1090
+# shellcheck disable=SC1091
 source "${ROOT_DIR}/.env"
 set +a
 
@@ -164,5 +167,9 @@ echo "  GlitchTip: npm run modular:glitchtip:up"
 echo "  GlitchTip login: ${GLITCHTIP_ADMIN_EMAIL:-admin@example.com} / ${GLITCHTIP_ADMIN_PASSWORD:-ChangeMeStrong123!}"
 echo "  Listmonk: npm run modular:listmonk:up"
 echo "  Listmonk login: ${LISTMONK_ADMIN_USERNAME:-admin} / ${LISTMONK_ADMIN_PASSWORD:-ChangeMeStrong123}"
+echo "  Zammad: npm run modular:zammad:up"
+echo "  Zammad login: ${ZAMMAD_ADMIN_EMAIL:-admin@example.com} / ${ZAMMAD_ADMIN_PASSWORD:-ChangeMeStrong123}"
+echo "  Langfuse: npm run modular:langfuse:up"
+echo "  Langfuse login: ${LANGFUSE_ADMIN_EMAIL:-admin@example.com} / ${LANGFUSE_ADMIN_PASSWORD:-ChangeMeStrong123}"
 echo "  Local secrets: ${SUPABASE_ENV}"
 echo "  Project env: ${ROOT_DIR}/.env"

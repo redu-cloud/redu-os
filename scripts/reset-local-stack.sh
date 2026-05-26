@@ -53,14 +53,16 @@ echo "Stopping local stack..."
 "${ROOT_DIR}/scripts/stop-local-stack.sh" >/dev/null 2>&1 || true
 
 echo "Removing stopped reduOS containers..."
-for name in redu-os-collector redu-os-qdrant redu-os-ollama redu-os-activepieces redu-os-activepieces-postgres redu-os-activepieces-redis redu-os-uptime-kuma redu-os-uptime-kuma-mariadb redu-os-umami redu-os-umami-postgres redu-os-glitchtip redu-os-glitchtip-postgres redu-os-glitchtip-redis redu-os-listmonk redu-os-listmonk-postgres; do
+for name in redu-os-collector redu-os-qdrant redu-os-ollama redu-os-activepieces redu-os-activepieces-postgres redu-os-activepieces-redis redu-os-uptime-kuma redu-os-uptime-kuma-mariadb redu-os-umami redu-os-umami-postgres redu-os-glitchtip redu-os-glitchtip-postgres redu-os-glitchtip-redis redu-os-listmonk redu-os-listmonk-postgres redu-os-langfuse-web redu-os-langfuse-worker redu-os-langfuse-postgres redu-os-langfuse-clickhouse redu-os-langfuse-minio redu-os-langfuse-redis zammad_zammad-nginx_1 zammad_zammad-railsserver_1 zammad_zammad-scheduler_1 zammad_zammad-websocket_1 zammad_zammad-postgresql_1 zammad_zammad-redis_1 zammad_zammad-memcached_1; do
   podman rm -f "$name" >/dev/null 2>&1 || true
 done
 
 echo "Removing stopped Supabase containers..."
 if command -v podman >/dev/null 2>&1; then
   while IFS= read -r name; do
-    [ -n "$name" ] && podman rm -f "$name" >/dev/null 2>&1 || true
+    if [ -n "$name" ]; then
+      podman rm -f "$name" >/dev/null 2>&1 || true
+    fi
   done < <(podman ps -a --format '{{.Names}}' | grep '^supabase-' || true)
 fi
 
@@ -76,9 +78,18 @@ case "$RESET_MODE" in
     remove_path "${LOCAL_DIR}/glitchtip/redis"
     remove_path "${LOCAL_DIR}/glitchtip/uploads"
     remove_path "${LOCAL_DIR}/listmonk/postgres"
+    remove_path "${LOCAL_DIR}/langfuse/postgres"
+    remove_path "${LOCAL_DIR}/langfuse/clickhouse"
+    remove_path "${LOCAL_DIR}/langfuse/clickhouse-logs"
+    remove_path "${LOCAL_DIR}/langfuse/minio"
+    remove_path "${LOCAL_DIR}/langfuse/redis"
     remove_path "${LOCAL_DIR}/listmonk/uploads"
     remove_path "${LOCAL_DIR}/listmonk/.installed"
     remove_path "${LOCAL_DIR}/listmonk/list.env"
+    remove_path "${LOCAL_DIR}/zammad/postgresql-data"
+    remove_path "${LOCAL_DIR}/zammad/redis-data"
+    remove_path "${LOCAL_DIR}/zammad/memcached-data"
+    remove_path "${LOCAL_DIR}/zammad/elasticsearch-data"
     ;;
   all)
     remove_path "${ROOT_DIR}/.env"
@@ -90,6 +101,8 @@ case "$RESET_MODE" in
     remove_path "${LOCAL_DIR}/umami"
     remove_path "${LOCAL_DIR}/glitchtip"
     remove_path "${LOCAL_DIR}/listmonk"
+    remove_path "${LOCAL_DIR}/langfuse"
+    remove_path "${LOCAL_DIR}/zammad"
     remove_path "${LOCAL_DIR}/supabase"
     remove_path "${LOCAL_DIR}/supabase-src"
     ;;

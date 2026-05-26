@@ -25,10 +25,6 @@ fail() {
   printf "  %-32s fail  %s\n" "$1" "$2"
 }
 
-info() {
-  printf "  %-32s info  %s\n" "$1" "$2"
-}
-
 version_of() {
   case "$1" in
     node) node --version 2>/dev/null ;;
@@ -213,6 +209,19 @@ if podman container exists redu-os-listmonk 2>/dev/null \
   check_container redu-os-listmonk-postgres
 fi
 
+if podman container exists zammad_zammad-railsserver_1 2>/dev/null \
+  || podman container exists zammad_zammad-nginx_1 2>/dev/null; then
+  echo
+  echo "Optional Zammad:"
+  check_container zammad_zammad-nginx_1
+  check_container zammad_zammad-railsserver_1
+  check_container zammad_zammad-scheduler_1
+  check_container zammad_zammad-websocket_1
+  check_container zammad_zammad-postgresql_1
+  check_container zammad_zammad-redis_1
+  check_container zammad_zammad-memcached_1
+fi
+
 echo
 echo "Services:"
 if http_ok http://127.0.0.1:3005/health; then
@@ -284,6 +293,14 @@ if podman container exists redu-os-listmonk 2>/dev/null; then
     ok "listmonk" "responding"
   else
     warn "listmonk" "not responding"
+  fi
+fi
+
+if podman container exists zammad_zammad-nginx_1 2>/dev/null; then
+  if http_ok "${ZAMMAD_URL:-http://127.0.0.1:${ZAMMAD_PORT:-8081}}"; then
+    ok "zammad" "responding"
+  else
+    warn "zammad" "not responding"
   fi
 fi
 

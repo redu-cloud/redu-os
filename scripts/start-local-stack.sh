@@ -162,7 +162,7 @@ done
 "${ROOT_DIR}/scripts/test-local-stack.sh"
 "${ROOT_DIR}/scripts/dashboard-auth-setup.sh"
 set -a
-# shellcheck disable=SC1090
+# shellcheck disable=SC1091
 source "${ROOT_DIR}/.env"
 set +a
 

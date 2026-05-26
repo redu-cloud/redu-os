@@ -179,6 +179,8 @@ npm run modular:uptime:up
 npm run modular:umami:up
 npm run modular:glitchtip:up
 npm run modular:listmonk:up
+npm run modular:zammad:up
+npm run modular:langfuse:up
 ```
 
 Use `modular:local:up` to run the exact same stack on one machine, but with Supabase, Qdrant, Ollama, and Collector started as separate modules. Individual services also have `:status`, `:logs`, and `:down` variants. See [Modular VM Walkthrough](./docs/modular-vm-walkthrough.md).
@@ -188,11 +190,15 @@ Use `modular:local:up` to run the exact same stack on one machine, but with Supa
 - [Local Stack and Use Cases](./docs/local-stack-and-use-cases.md): one-command stack, service checks, curl examples, support/product/error/uptime/analytics scenarios, and troubleshooting.
 - [Deployment Modes](./docs/deployment-modes.md): smallest complete tier, modular split-VM tier, service contracts, network matrix, and rollout guidance.
 - [Modular VM Walkthrough](./docs/modular-vm-walkthrough.md): compose files and commands for running collector, Qdrant, and Ollama on separate VMs.
+- [Production Deployment](./docs/production-deployment.md): DNS, reverse proxy, firewall, secrets, backups, restores, upgrades, monitoring, and smoke tests.
+- [Integration Webhooks](./docs/integration-webhooks.md): connect GlitchTip, Zammad, Uptime Kuma, Umami, Listmonk, custom apps, and Activepieces.
 - [Activepieces Automation](./docs/activepieces.md): run real Activepieces with PostgreSQL/Redis, create use-case workflows, and connect them to collector webhooks.
 - [Uptime Kuma Monitoring](./docs/uptime-kuma.md): run the optional monitoring module and watch the local/modular stack.
 - [Umami Analytics](./docs/umami.md): run the optional analytics module, create the demo website, and get a tracking snippet.
 - [GlitchTip Errors](./docs/glitchtip.md): run the optional error tracking module and create the demo organization/project.
 - [Listmonk Audience](./docs/listmonk.md): run the optional audience module and create the demo waitlist.
+- [Zammad Support](./docs/zammad.md): run the optional helpdesk module and create the local support admin.
+- [Langfuse AI Observability](./docs/langfuse.md): run local Langfuse and trace collector prompts, model output, latency, and fallback behavior.
 - [Security](./SECURITY.md): local demo credentials, webhook handling, and production cautions.
 
 ## Build

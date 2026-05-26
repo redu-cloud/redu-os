@@ -70,7 +70,10 @@ if podman container exists redu-os-activepieces 2>/dev/null \
   || podman container exists redu-os-glitchtip-postgres 2>/dev/null \
   || podman container exists redu-os-glitchtip-redis 2>/dev/null \
   || podman container exists redu-os-listmonk 2>/dev/null \
-  || podman container exists redu-os-listmonk-postgres 2>/dev/null; then
+  || podman container exists redu-os-listmonk-postgres 2>/dev/null \
+  || podman container exists zammad_zammad-railsserver_1 2>/dev/null \
+  || podman container exists zammad_zammad-nginx_1 2>/dev/null \
+  || podman container exists redu-os-langfuse-web 2>/dev/null; then
   echo
   echo "Optional modules:"
   if podman container exists redu-os-activepieces 2>/dev/null \
@@ -102,6 +105,24 @@ if podman container exists redu-os-activepieces 2>/dev/null \
     container_status redu-os-listmonk "${LISTMONK_PORT:-9000}"
     container_status redu-os-listmonk-postgres ""
   fi
+  if podman container exists zammad_zammad-railsserver_1 2>/dev/null \
+    || podman container exists zammad_zammad-nginx_1 2>/dev/null; then
+    container_status zammad_zammad-nginx_1 "${ZAMMAD_PORT:-8081}"
+    container_status zammad_zammad-railsserver_1 ""
+    container_status zammad_zammad-scheduler_1 ""
+    container_status zammad_zammad-websocket_1 ""
+    container_status zammad_zammad-postgresql_1 ""
+    container_status zammad_zammad-redis_1 ""
+    container_status zammad_zammad-memcached_1 ""
+  fi
+  if podman container exists redu-os-langfuse-web 2>/dev/null; then
+    container_status redu-os-langfuse-web "${LANGFUSE_PORT:-3007}"
+    container_status redu-os-langfuse-worker "${LANGFUSE_WORKER_PORT:-3030}"
+    container_status redu-os-langfuse-postgres ""
+    container_status redu-os-langfuse-clickhouse "${LANGFUSE_CLICKHOUSE_HTTP_PORT:-8123}, ${LANGFUSE_CLICKHOUSE_NATIVE_PORT:-9001}"
+    container_status redu-os-langfuse-minio "${LANGFUSE_MINIO_PORT:-9090}"
+    container_status redu-os-langfuse-redis ""
+  fi
 fi
 
 echo
@@ -126,6 +147,12 @@ fi
 if podman container exists redu-os-listmonk 2>/dev/null; then
   service_health "Listmonk" "http://127.0.0.1:${LISTMONK_PORT:-9000}"
 fi
+if podman container exists zammad_zammad-nginx_1 2>/dev/null; then
+  service_health "Zammad" "${ZAMMAD_URL:-http://127.0.0.1:${ZAMMAD_PORT:-8081}}"
+fi
+if podman container exists redu-os-langfuse-web 2>/dev/null; then
+  service_health "Langfuse" "${LANGFUSE_URL:-http://127.0.0.1:${LANGFUSE_PORT:-3007}}"
+fi
 
 echo
 echo "URLs:"
@@ -140,6 +167,8 @@ printf "  %-32s %s\n" "Uptime Kuma" "${UPTIME_KUMA_URL:-http://127.0.0.1:${UPTIM
 printf "  %-32s %s\n" "Umami" "${UMAMI_URL:-http://127.0.0.1:${UMAMI_PORT:-3002}}"
 printf "  %-32s %s\n" "GlitchTip" "${GLITCHTIP_URL:-http://127.0.0.1:${GLITCHTIP_PORT:-8001}}"
 printf "  %-32s %s\n" "Listmonk" "${LISTMONK_URL:-http://127.0.0.1:${LISTMONK_PORT:-9000}}"
+printf "  %-32s %s\n" "Zammad" "${ZAMMAD_URL:-http://127.0.0.1:${ZAMMAD_PORT:-8081}}"
+printf "  %-32s %s\n" "Langfuse" "${LANGFUSE_URL:-http://127.0.0.1:${LANGFUSE_PORT:-3007}}"
 
 if [ -n "${DASHBOARD_AUTH_EMAIL:-}" ] && [ -n "${DASHBOARD_AUTH_PASSWORD:-}" ]; then
   echo
@@ -181,4 +210,19 @@ if [ -n "${LISTMONK_ADMIN_USERNAME:-}" ] && [ -n "${LISTMONK_ADMIN_PASSWORD:-}" 
   echo "Listmonk login:"
   printf "  %-32s %s\n" "username" "$LISTMONK_ADMIN_USERNAME"
   printf "  %-32s %s\n" "password" "$LISTMONK_ADMIN_PASSWORD"
+fi
+
+if [ -n "${ZAMMAD_ADMIN_EMAIL:-}" ] && [ -n "${ZAMMAD_ADMIN_PASSWORD:-}" ]; then
+  echo
+  echo "Zammad login:"
+  printf "  %-32s %s\n" "email" "$ZAMMAD_ADMIN_EMAIL"
+  printf "  %-32s %s\n" "password" "$ZAMMAD_ADMIN_PASSWORD"
+fi
+
+if [ -n "${LANGFUSE_ADMIN_EMAIL:-}" ] && [ -n "${LANGFUSE_ADMIN_PASSWORD:-}" ]; then
+  echo
+  echo "Langfuse login:"
+  printf "  %-32s %s\n" "email" "$LANGFUSE_ADMIN_EMAIL"
+  printf "  %-32s %s\n" "password" "$LANGFUSE_ADMIN_PASSWORD"
+  printf "  %-32s %s\n" "public key" "${LANGFUSE_PUBLIC_KEY:-}"
 fi

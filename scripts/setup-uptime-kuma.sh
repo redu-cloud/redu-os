@@ -17,7 +17,7 @@ fi
 "${ROOT_DIR}/scripts/uptime-env.sh" >/dev/null
 
 set -a
-# shellcheck disable=SC1091
+# shellcheck disable=SC1090
 source "$ENV_FILE"
 if [ -f "$SUPABASE_ENV" ]; then
   # shellcheck disable=SC1090

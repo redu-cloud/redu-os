@@ -1,4 +1,5 @@
 import { config } from "./config.js";
+import { traceAiGeneration } from "./langfuse.js";
 import type { StoredEvent } from "./types.js";
 
 export type AiInsight = {
@@ -58,8 +59,19 @@ function cleanCategory(value: unknown, fallback: string): string {
 }
 
 export async function analyzeEvent(event: StoredEvent): Promise<AiInsight> {
+  const startedAt = new Date();
+
   if (!config.AI_ENABLED) {
-    return fallbackInsight(event);
+    const insight = fallbackInsight(event);
+    await traceAiGeneration({
+      event,
+      prompt: "AI disabled. Fallback insight generated locally.",
+      insight,
+      rawResponse: insight,
+      startedAt,
+      endedAt: new Date()
+    });
+    return insight;
   }
 
   const prompt = `
@@ -98,13 +110,23 @@ ${JSON.stringify(event, null, 2)}
 
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) {
-      return { ...fallbackInsight(event), raw: data };
+      const insight = { ...fallbackInsight(event), raw: data };
+      await traceAiGeneration({
+        event,
+        prompt,
+        insight,
+        rawResponse: data,
+        startedAt,
+        endedAt: new Date(),
+        error: "Ollama response did not contain JSON"
+      });
+      return insight;
     }
 
     const parsed = JSON.parse(match[0]) as Partial<AiInsight>;
     const fallback = fallbackInsight(event);
 
-    return {
+    const insight = {
       category: cleanCategory(parsed.category, fallback.category),
       priority: cleanPriority(parsed.priority, fallback.priority),
       sentiment: cleanSentiment(parsed.sentiment, fallback.sentiment),
@@ -112,13 +134,33 @@ ${JSON.stringify(event, null, 2)}
       recommended_action: parsed.recommended_action ?? fallback.recommended_action,
       raw: data
     };
+    await traceAiGeneration({
+      event,
+      prompt,
+      insight,
+      rawResponse: data,
+      startedAt,
+      endedAt: new Date()
+    });
+    return insight;
   } catch (error) {
-    return {
+    const message = error instanceof Error ? error.message : String(error);
+    const insight = {
       ...fallbackInsight(event),
       raw: {
-        error: error instanceof Error ? error.message : String(error)
+        error: message
       }
     };
+    await traceAiGeneration({
+      event,
+      prompt,
+      insight,
+      rawResponse: insight.raw,
+      startedAt,
+      endedAt: new Date(),
+      error: message
+    });
+    return insight;
   }
 }
 

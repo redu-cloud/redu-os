@@ -16,7 +16,7 @@ fi
 "${ROOT_DIR}/scripts/activepieces-env.sh"
 
 set -a
-# shellcheck disable=SC1091
+# shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
 

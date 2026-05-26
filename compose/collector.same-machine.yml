@@ -11,3 +11,4 @@ services:
       QDRANT_ENABLED: "true"
       QDRANT_URL: http://host.containers.internal:${QDRANT_REST_PORT:-6333}
       QDRANT_FALLBACK_EMBEDDINGS: "true"
+      LANGFUSE_HOST: http://host.containers.internal:${LANGFUSE_PORT:-3007}

@@ -32,6 +32,12 @@ const envSchema = z.object({
   OLLAMA_MODEL: z.string().default("deepseek-r1:8b"),
   OLLAMA_EMBED_MODEL: z.string().default("nomic-embed-text"),
 
+  LANGFUSE_ENABLED: envBoolean(false),
+  LANGFUSE_HOST: z.string().url().optional().or(z.literal("")).default(""),
+  LANGFUSE_PUBLIC_KEY: z.string().optional().default(""),
+  LANGFUSE_SECRET_KEY: z.string().optional().default(""),
+  LANGFUSE_TIMEOUT_MS: z.coerce.number().default(2500),
+
   AUTOMATION_WEBHOOK_URL: z.string().url().optional().or(z.literal("")).default(""),
   AUTOMATION_WEBHOOK_URLS: z.string().optional().default(""),
   AUTOMATION_WEBHOOK_API_KEY: z.string().optional().default(""),

@@ -196,6 +196,12 @@ For the real Listmonk audience module, see [Listmonk Audience](./listmonk.md):
 npm run modular:listmonk:up
 ```
 
+For the real Zammad support module, see [Zammad Support](./zammad.md):
+
+```bash
+npm run modular:zammad:up
+```
+
 To test the full Activepieces workflow set after setup:
 
 ```bash

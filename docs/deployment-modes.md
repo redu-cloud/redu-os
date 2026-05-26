@@ -246,6 +246,7 @@ npm run modular:uptime:up
 npm run modular:umami:up
 npm run modular:glitchtip:up
 npm run modular:listmonk:up
+npm run modular:zammad:up
 ```
 
 See [Activepieces Automation](./activepieces.md).
@@ -253,6 +254,7 @@ See [Uptime Kuma Monitoring](./uptime-kuma.md).
 See [Umami Analytics](./umami.md).
 See [GlitchTip Errors](./glitchtip.md).
 See [Listmonk Audience](./listmonk.md).
+See [Zammad Support](./zammad.md).
 
 For a local mock receiver:
 

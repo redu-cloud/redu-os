@@ -13,7 +13,7 @@ fi
 "${ROOT_DIR}/scripts/umami-env.sh" >/dev/null
 
 set -a
-# shellcheck disable=SC1091
+# shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
 
