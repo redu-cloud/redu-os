@@ -1,0 +1,561 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+  - podman
+  - podman-compose
+  - uidmap
+  - curl
+  - jq
+  - openssl
+  - psmisc
+  - python3
+  - python3-yaml
+
+write_files:
+  - path: /root/litellm-demo.env
+    permissions: "0600"
+    owner: root:root
+    content: |
+      # redu.cloud LiteLLM AI Gateway template
+      # Purpose: make reduOS model-provider agnostic.
+      # Use local Ollama/DeepSeek by default, or add external providers later.
+
+      # Public URL for users.
+      # Leave empty to auto-detect public IP and use http://IP:4000
+      LITELLM_PUBLIC_URL=""
+
+      # LiteLLM
+      LITELLM_IMAGE="ghcr.io/berriai/litellm:main-latest"
+      LITELLM_PORT=4000
+      LITELLM_NUM_WORKERS=4
+
+      # Master key for API and /ui login.
+      # Must start with sk-. Leave AUTO_GENERATE for cloud-init.
+      LITELLM_MASTER_KEY=AUTO_GENERATE
+      LITELLM_SALT_KEY=AUTO_GENERATE
+
+      # PostgreSQL persistence for LiteLLM UI, virtual keys, spend tracking, etc.
+      POSTGRES_DB=litellm
+      POSTGRES_USER=litellm
+      POSTGRES_PASSWORD=AUTO_GENERATE
+
+      # Default local model route through Ollama.
+      # If OLLAMA_URL is still a placeholder, the route is skipped safely.
+      OLLAMA_ENABLED=true
+      OLLAMA_URL=http://YOUR_OLLAMA_VM_IP:11434
+      OLLAMA_CHAT_MODEL=deepseek-r1:1.5b
+      OLLAMA_EMBED_MODEL=nomic-embed-text
+
+      # Optional OpenAI route.
+      # Set OPENAI_API_KEY to enable.
+      OPENAI_ENABLED=false
+      OPENAI_API_KEY=""
+      OPENAI_CHAT_MODEL=gpt-4o-mini
+
+      # Optional Anthropic/Claude route.
+      # Set ANTHROPIC_API_KEY to enable.
+      ANTHROPIC_ENABLED=false
+      ANTHROPIC_API_KEY=""
+      ANTHROPIC_CHAT_MODEL=claude-3-5-haiku-latest
+
+      # Optional Google Gemini route.
+      # Set GEMINI_API_KEY to enable.
+      GEMINI_ENABLED=false
+      GEMINI_API_KEY=""
+      GEMINI_CHAT_MODEL=gemini/gemini-1.5-flash
+
+      # Optional Groq route.
+      # Set GROQ_API_KEY to enable.
+      GROQ_ENABLED=false
+      GROQ_API_KEY=""
+      GROQ_CHAT_MODEL=groq/llama-3.1-8b-instant
+
+      # Optional OpenRouter route.
+      # Set OPENROUTER_API_KEY to enable.
+      OPENROUTER_ENABLED=false
+      OPENROUTER_API_KEY=""
+      OPENROUTER_CHAT_MODEL=openrouter/meta-llama/llama-3.1-8b-instruct
+
+      # Optional reduOS collector callback metadata.
+      # This template does not require collector integration, but these values are written to output.
+      REDUOS_COLLECTOR_URL=http://YOUR_COLLECTOR_VM_IP:3000
+      REDUOS_COLLECTOR_API_KEY=YOUR_COLLECTOR_API_KEY_HERE
+
+      # Set true only if reusing a broken test VM and you want to remove old containers.
+      # This does not remove Postgres volume data unless LITELLM_RESET_DATA_ON_BOOT=true.
+      LITELLM_RESET_CONTAINERS_ON_BOOT=true
+      LITELLM_RESET_DATA_ON_BOOT=false
+
+  - path: /etc/containers/registries.conf
+    permissions: "0644"
+    owner: root:root
+    content: |
+      unqualified-search-registries = ["docker.io", "ghcr.io"]
+
+      [[registry]]
+      prefix = "docker.io"
+      location = "docker.io"
+
+      [[registry]]
+      prefix = "ghcr.io"
+      location = "ghcr.io"
+
+  - path: /usr/local/bin/litellm_bootstrap.sh
+    permissions: "0755"
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      LOG_FILE="/var/log/litellm-bootstrap.log"
+      exec > >(tee -a "$LOG_FILE") 2>&1
+
+      echo "========================================"
+      echo " redu.cloud LiteLLM AI Gateway bootstrap"
+      echo " Started: $(date -Is)"
+      echo "========================================"
+
+      source /root/litellm-demo.env
+
+      APP_DIR="/opt/litellm"
+      mkdir -p "$APP_DIR"
+
+      PUBLIC_IP="$(curl -fsS --max-time 10 https://api.ipify.org || true)"
+      if [ -z "$PUBLIC_IP" ]; then
+        PUBLIC_IP="$(hostname -I | awk '{print $1}')"
+      fi
+
+      normalize_url() {
+        local raw="$1"
+        local fallback="$2"
+        if [ -z "$raw" ]; then
+          echo "$fallback"
+          return
+        fi
+        if [[ "$raw" =~ ^https?:// ]]; then
+          echo "$raw"
+          return
+        fi
+        echo "https://${raw}"
+      }
+
+      LITELLM_PUBLIC_URL="$(normalize_url "${LITELLM_PUBLIC_URL:-}" "http://${PUBLIC_IP}:${LITELLM_PORT}")"
+
+      if [ "${LITELLM_MASTER_KEY:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        LITELLM_MASTER_KEY="sk-$(openssl rand -hex 32)"
+      fi
+      if [[ ! "$LITELLM_MASTER_KEY" =~ ^sk- ]]; then
+        LITELLM_MASTER_KEY="sk-${LITELLM_MASTER_KEY}"
+      fi
+      if [ "${LITELLM_SALT_KEY:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        LITELLM_SALT_KEY="sk-$(openssl rand -hex 32)"
+      fi
+      if [ "${POSTGRES_PASSWORD:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+      fi
+
+      echo "Writing normalized /root/litellm-demo.env..."
+      cat > /root/litellm-demo.env <<EOF_ENV
+      LITELLM_PUBLIC_URL=${LITELLM_PUBLIC_URL}
+      LITELLM_IMAGE=${LITELLM_IMAGE}
+      LITELLM_PORT=${LITELLM_PORT}
+      LITELLM_NUM_WORKERS=${LITELLM_NUM_WORKERS}
+      LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
+      LITELLM_SALT_KEY=${LITELLM_SALT_KEY}
+      POSTGRES_DB=${POSTGRES_DB}
+      POSTGRES_USER=${POSTGRES_USER}
+      POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      OLLAMA_ENABLED=${OLLAMA_ENABLED}
+      OLLAMA_URL=${OLLAMA_URL}
+      OLLAMA_CHAT_MODEL=${OLLAMA_CHAT_MODEL}
+      OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL}
+      OPENAI_ENABLED=${OPENAI_ENABLED}
+      OPENAI_API_KEY=${OPENAI_API_KEY}
+      OPENAI_CHAT_MODEL=${OPENAI_CHAT_MODEL}
+      ANTHROPIC_ENABLED=${ANTHROPIC_ENABLED}
+      ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      ANTHROPIC_CHAT_MODEL=${ANTHROPIC_CHAT_MODEL}
+      GEMINI_ENABLED=${GEMINI_ENABLED}
+      GEMINI_API_KEY=${GEMINI_API_KEY}
+      GEMINI_CHAT_MODEL=${GEMINI_CHAT_MODEL}
+      GROQ_ENABLED=${GROQ_ENABLED}
+      GROQ_API_KEY=${GROQ_API_KEY}
+      GROQ_CHAT_MODEL=${GROQ_CHAT_MODEL}
+      OPENROUTER_ENABLED=${OPENROUTER_ENABLED}
+      OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      OPENROUTER_CHAT_MODEL=${OPENROUTER_CHAT_MODEL}
+      REDUOS_COLLECTOR_URL=${REDUOS_COLLECTOR_URL}
+      REDUOS_COLLECTOR_API_KEY=${REDUOS_COLLECTOR_API_KEY}
+      LITELLM_RESET_CONTAINERS_ON_BOOT=${LITELLM_RESET_CONTAINERS_ON_BOOT}
+      LITELLM_RESET_DATA_ON_BOOT=${LITELLM_RESET_DATA_ON_BOOT}
+      EOF_ENV
+      chmod 600 /root/litellm-demo.env
+      source /root/litellm-demo.env
+
+      echo "Writing LiteLLM config generator..."
+      cat > "$APP_DIR/generate-config.py" <<'PY'
+      import os
+      import yaml
+
+      def enabled(name: str) -> bool:
+          return os.getenv(name, "false").lower() == "true"
+
+      def has_value(value: str | None) -> bool:
+          if not value:
+              return False
+          bad = ["YOUR_", "PASTE_", "CHANGE_ME", "AUTO_GENERATE"]
+          return not any(marker in value for marker in bad)
+
+      models = []
+
+      ollama_url = os.getenv("OLLAMA_URL", "")
+      if enabled("OLLAMA_ENABLED") and has_value(ollama_url):
+          models.append({
+              "model_name": "local-deepseek",
+              "litellm_params": {
+                  "model": f"ollama/{os.getenv('OLLAMA_CHAT_MODEL', 'deepseek-r1:1.5b')}",
+                  "api_base": ollama_url,
+              },
+              "model_info": {
+                  "description": "Local Ollama chat model for private reduOS mode"
+              }
+          })
+          models.append({
+              "model_name": "local-embeddings",
+              "litellm_params": {
+                  "model": f"ollama/{os.getenv('OLLAMA_EMBED_MODEL', 'nomic-embed-text')}",
+                  "api_base": ollama_url,
+              },
+              "model_info": {
+                  "mode": "embedding",
+                  "description": "Local Ollama embedding model for reduOS memory"
+              }
+          })
+
+      if enabled("OPENAI_ENABLED") and has_value(os.getenv("OPENAI_API_KEY")):
+          models.append({
+              "model_name": "openai-default",
+              "litellm_params": {
+                  "model": f"openai/{os.getenv('OPENAI_CHAT_MODEL', 'gpt-4o-mini')}",
+                  "api_key": "os.environ/OPENAI_API_KEY",
+              }
+          })
+
+      if enabled("ANTHROPIC_ENABLED") and has_value(os.getenv("ANTHROPIC_API_KEY")):
+          models.append({
+              "model_name": "claude-default",
+              "litellm_params": {
+                  "model": f"anthropic/{os.getenv('ANTHROPIC_CHAT_MODEL', 'claude-3-5-haiku-latest')}",
+                  "api_key": "os.environ/ANTHROPIC_API_KEY",
+              }
+          })
+
+      if enabled("GEMINI_ENABLED") and has_value(os.getenv("GEMINI_API_KEY")):
+          models.append({
+              "model_name": "gemini-default",
+              "litellm_params": {
+                  "model": os.getenv("GEMINI_CHAT_MODEL", "gemini/gemini-1.5-flash"),
+                  "api_key": "os.environ/GEMINI_API_KEY",
+              }
+          })
+
+      if enabled("GROQ_ENABLED") and has_value(os.getenv("GROQ_API_KEY")):
+          models.append({
+              "model_name": "groq-default",
+              "litellm_params": {
+                  "model": os.getenv("GROQ_CHAT_MODEL", "groq/llama-3.1-8b-instant"),
+                  "api_key": "os.environ/GROQ_API_KEY",
+              }
+          })
+
+      if enabled("OPENROUTER_ENABLED") and has_value(os.getenv("OPENROUTER_API_KEY")):
+          models.append({
+              "model_name": "openrouter-default",
+              "litellm_params": {
+                  "model": os.getenv("OPENROUTER_CHAT_MODEL", "openrouter/meta-llama/llama-3.1-8b-instruct"),
+                  "api_key": "os.environ/OPENROUTER_API_KEY",
+              }
+          })
+
+      if not models:
+          # Safe placeholder so the proxy and UI still boot on a fresh VM.
+          # Real model calls will fail until one provider is configured.
+          models.append({
+              "model_name": "configure-a-provider-first",
+              "litellm_params": {
+                  "model": "openai/gpt-4o-mini",
+                  "api_key": "os.environ/OPENAI_API_KEY",
+              },
+              "model_info": {
+                  "description": "Placeholder. Enable Ollama or an external provider in /root/litellm-demo.env."
+              }
+          })
+
+      config = {
+          "model_list": models,
+          "general_settings": {
+              "master_key": os.getenv("LITELLM_MASTER_KEY"),
+              "database_url": os.getenv("DATABASE_URL"),
+          },
+          "litellm_settings": {
+              "drop_params": True,
+              "set_verbose": False,
+              "request_timeout": 120,
+              "num_retries": 2,
+          },
+          "router_settings": {
+              "routing_strategy": "simple-shuffle",
+              "num_retries": 2,
+              "timeout": 120,
+          },
+      }
+
+      with open("/opt/litellm/config.yaml", "w", encoding="utf-8") as f:
+          yaml.safe_dump(config, f, sort_keys=False)
+      PY
+      export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@litellm-postgres:5432/${POSTGRES_DB}"
+      export STORE_MODEL_IN_DB="True"
+      python3 "$APP_DIR/generate-config.py"
+      chmod 600 "$APP_DIR/config.yaml"
+
+      echo "Writing compose file..."
+      cat > "$APP_DIR/podman-compose.yml" <<'EOF_COMPOSE'
+      version: "3.9"
+
+      services:
+        litellm-postgres:
+          image: docker.io/postgres:16-alpine
+          container_name: litellm-postgres
+          restart: unless-stopped
+          environment:
+            POSTGRES_DB: ${POSTGRES_DB}
+            POSTGRES_USER: ${POSTGRES_USER}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+          volumes:
+            - litellm_postgres_data:/var/lib/postgresql/data
+          healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+            interval: 5s
+            timeout: 5s
+            retries: 30
+          networks:
+            - litellm-net
+
+        litellm:
+          image: ${LITELLM_IMAGE}
+          container_name: litellm
+          restart: unless-stopped
+          depends_on:
+            litellm-postgres:
+              condition: service_healthy
+          ports:
+            - "${LITELLM_PORT}:4000"
+          environment:
+            DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@litellm-postgres:5432/${POSTGRES_DB}
+            STORE_MODEL_IN_DB: "True"
+            LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+            LITELLM_SALT_KEY: ${LITELLM_SALT_KEY}
+            OPENAI_API_KEY: ${OPENAI_API_KEY}
+            ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+            GEMINI_API_KEY: ${GEMINI_API_KEY}
+            GROQ_API_KEY: ${GROQ_API_KEY}
+            OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+          volumes:
+            - ./config.yaml:/app/config.yaml:ro
+          command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "${LITELLM_NUM_WORKERS}"]
+          networks:
+            - litellm-net
+
+      networks:
+        litellm-net:
+          driver: bridge
+
+      volumes:
+        litellm_postgres_data:
+      EOF_COMPOSE
+      echo "Stopping old service if present..."
+      systemctl stop litellm.service 2>/dev/null || true
+
+      if [ "${LITELLM_RESET_CONTAINERS_ON_BOOT}" = "true" ]; then
+        echo "Removing old LiteLLM containers if present..."
+        podman rm -f litellm litellm-postgres 2>/dev/null || true
+      fi
+
+      if [ "${LITELLM_RESET_DATA_ON_BOOT}" = "true" ]; then
+        echo "Reset data enabled. Removing LiteLLM Postgres volume..."
+        podman volume rm litellm_litellm_postgres_data 2>/dev/null || true
+        podman volume rm litellm_postgres_data 2>/dev/null || true
+      fi
+
+      echo "Freeing port ${LITELLM_PORT} if needed..."
+      fuser -k "${LITELLM_PORT}/tcp" 2>/dev/null || true
+
+      echo "Pulling images..."
+      cd "$APP_DIR"
+      for i in $(seq 1 5); do
+        podman-compose --env-file /root/litellm-demo.env pull && break
+        echo "Pull failed, retrying in 20s..."
+        sleep 20
+      done
+
+      cat > /etc/systemd/system/litellm.service <<EOF_SERVICE
+      [Unit]
+      Description=redu.cloud LiteLLM AI Gateway
+      Wants=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      WorkingDirectory=${APP_DIR}
+      EnvironmentFile=/root/litellm-demo.env
+      ExecStart=/usr/bin/podman-compose --env-file /root/litellm-demo.env up -d
+      ExecStop=/usr/bin/podman-compose --env-file /root/litellm-demo.env down
+      TimeoutStartSec=600
+
+      [Install]
+      WantedBy=multi-user.target
+      EOF_SERVICE
+
+      systemctl daemon-reload
+      systemctl enable litellm.service
+      systemctl restart litellm.service
+
+      echo "Waiting for LiteLLM API..."
+      HEALTH_OK=false
+      for i in $(seq 1 90); do
+        if curl -fsS "http://127.0.0.1:${LITELLM_PORT}/health" >/tmp/litellm-health.json 2>/dev/null; then
+          HEALTH_OK=true
+          break
+        fi
+        if curl -fsS "http://127.0.0.1:${LITELLM_PORT}/v1/models" \
+          -H "Authorization: Bearer ${LITELLM_MASTER_KEY}" >/tmp/litellm-models.json 2>/dev/null; then
+          HEALTH_OK=true
+          break
+        fi
+        sleep 5
+      done
+
+      echo "Fetching model list..."
+      curl -sS "http://127.0.0.1:${LITELLM_PORT}/v1/models" \
+        -H "Authorization: Bearer ${LITELLM_MASTER_KEY}" \
+        -o /root/litellm-models.json || true
+
+      DEFAULT_CHAT_MODEL="configure-a-provider-first"
+      if grep -q 'local-deepseek' "$APP_DIR/config.yaml"; then
+        DEFAULT_CHAT_MODEL="local-deepseek"
+      elif grep -q 'openai-default' "$APP_DIR/config.yaml"; then
+        DEFAULT_CHAT_MODEL="openai-default"
+      elif grep -q 'claude-default' "$APP_DIR/config.yaml"; then
+        DEFAULT_CHAT_MODEL="claude-default"
+      elif grep -q 'gemini-default' "$APP_DIR/config.yaml"; then
+        DEFAULT_CHAT_MODEL="gemini-default"
+      elif grep -q 'groq-default' "$APP_DIR/config.yaml"; then
+        DEFAULT_CHAT_MODEL="groq-default"
+      elif grep -q 'openrouter-default' "$APP_DIR/config.yaml"; then
+        DEFAULT_CHAT_MODEL="openrouter-default"
+      fi
+
+      cat > /root/litellm-demo-output.txt <<EOF_OUTPUT
+      redu.cloud LiteLLM AI Gateway is ready.
+
+      Health OK: ${HEALTH_OK}
+
+      Public URL:
+      ${LITELLM_PUBLIC_URL}
+
+      LiteLLM UI:
+      ${LITELLM_PUBLIC_URL}/ui
+
+      Login/API key:
+      ${LITELLM_MASTER_KEY}
+
+      Default chat model alias detected:
+      ${DEFAULT_CHAT_MODEL}
+
+      Useful endpoints:
+      GET  ${LITELLM_PUBLIC_URL}/health
+      GET  ${LITELLM_PUBLIC_URL}/v1/models
+      POST ${LITELLM_PUBLIC_URL}/v1/chat/completions
+      POST ${LITELLM_PUBLIC_URL}/v1/embeddings
+      UI   ${LITELLM_PUBLIC_URL}/ui
+
+      Test health:
+      curl -sS "${LITELLM_PUBLIC_URL}/health" | jq
+
+      List models:
+      curl -sS "${LITELLM_PUBLIC_URL}/v1/models" \\
+        -H "Authorization: Bearer ${LITELLM_MASTER_KEY}" | jq
+
+      Test chat:
+      curl -sS -X POST "${LITELLM_PUBLIC_URL}/v1/chat/completions" \\
+        -H "Content-Type: application/json" \\
+        -H "Authorization: Bearer ${LITELLM_MASTER_KEY}" \\
+        -d '{
+          "model": "${DEFAULT_CHAT_MODEL}",
+          "messages": [
+            {"role": "system", "content": "You are the reduOS AI gateway test model."},
+            {"role": "user", "content": "Reply with one short sentence explaining what LiteLLM does for reduOS."}
+          ],
+          "temperature": 0.2
+        }' | jq
+
+      Test embeddings, only if local-embeddings is configured:
+      curl -sS -X POST "${LITELLM_PUBLIC_URL}/v1/embeddings" \\
+        -H "Content-Type: application/json" \\
+        -H "Authorization: Bearer ${LITELLM_MASTER_KEY}" \\
+        -d '{
+          "model": "local-embeddings",
+          "input": "startup incident memory search"
+        }' | jq '.data[0].embedding | length'
+
+      reduOS integration values:
+      AI_PROVIDER=litellm
+      LITELLM_BASE_URL=${LITELLM_PUBLIC_URL}/v1
+      LITELLM_API_KEY=${LITELLM_MASTER_KEY}
+      LITELLM_MODEL=${DEFAULT_CHAT_MODEL}
+      LITELLM_EMBED_MODEL=local-embeddings
+
+      To enable local Ollama/DeepSeek:
+      1. Edit /root/litellm-demo.env
+      2. Set OLLAMA_URL=http://YOUR_OLLAMA_VM_IP:11434
+      3. Keep OLLAMA_ENABLED=true
+      4. Run: /usr/local/bin/litellm_bootstrap.sh
+
+      To enable external AI:
+      1. Edit /root/litellm-demo.env
+      2. Set OPENAI_ENABLED=true and OPENAI_API_KEY=...
+         or ANTHROPIC_ENABLED=true and ANTHROPIC_API_KEY=...
+         or GEMINI_ENABLED=true and GEMINI_API_KEY=...
+      3. Run: /usr/local/bin/litellm_bootstrap.sh
+
+      Files:
+      /root/litellm-demo.env
+      /root/litellm-demo-output.txt
+      /root/litellm-models.json
+      /opt/litellm/config.yaml
+      /opt/litellm/podman-compose.yml
+      /var/log/litellm-bootstrap.log
+
+      Services:
+      systemctl status litellm.service
+
+      Containers:
+      podman ps -a
+      podman logs -f litellm
+      podman logs -f litellm-postgres
+      EOF_OUTPUT
+
+      chmod 600 /root/litellm-demo-output.txt
+
+      echo "========================================"
+      echo " LiteLLM demo ready"
+      echo " Public URL: ${LITELLM_PUBLIC_URL}"
+      echo " UI: ${LITELLM_PUBLIC_URL}/ui"
+      echo " Output: /root/litellm-demo-output.txt"
+      echo "========================================"
+
+runcmd:
+  - [ bash, -lc, "/usr/local/bin/litellm_bootstrap.sh" ]

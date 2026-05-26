@@ -11,6 +11,9 @@ type TraceInput = {
   startedAt: Date;
   endedAt: Date;
   error?: string;
+  provider: string;
+  model: string;
+  baseUrl: string;
 };
 
 function canTrace() {
@@ -72,8 +75,8 @@ export async function traceAiGeneration(input: TraceInput) {
         body: {
           id: generationId,
           traceId,
-          name: "ollama.generate.insight",
-          model: config.AI_ENABLED ? config.OLLAMA_MODEL : "fallback",
+          name: `${input.provider}.generate.insight`,
+          model: input.model,
           startTime: input.startedAt.toISOString(),
           endTime: input.endedAt.toISOString(),
           input: input.prompt,
@@ -82,7 +85,8 @@ export async function traceAiGeneration(input: TraceInput) {
           statusMessage: input.error,
           metadata: {
             event_id: input.event.id,
-            ollama_url: config.OLLAMA_URL,
+            ai_provider: input.provider,
+            ai_base_url: input.baseUrl,
             ai_enabled: config.AI_ENABLED,
             duration_ms: input.endedAt.getTime() - input.startedAt.getTime()
           }

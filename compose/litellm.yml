@@ -1,0 +1,43 @@
+version: "3.8"
+
+services:
+  litellm-postgres:
+    image: docker.io/library/postgres:16-alpine
+    container_name: redu-os-litellm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${LITELLM_POSTGRES_DATABASE:-litellm}
+      POSTGRES_USER: ${LITELLM_POSTGRES_USERNAME:-litellm}
+      POSTGRES_PASSWORD: ${LITELLM_POSTGRES_PASSWORD}
+    volumes:
+      - ../.local/litellm/postgres:/var/lib/postgresql/data
+
+  litellm:
+    image: ${LITELLM_IMAGE:-ghcr.io/berriai/litellm:main-latest}
+    container_name: redu-os-litellm
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgresql://${LITELLM_POSTGRES_USERNAME:-litellm}:${LITELLM_POSTGRES_PASSWORD}@litellm-postgres:5432/${LITELLM_POSTGRES_DATABASE:-litellm}
+      STORE_MODEL_IN_DB: "True"
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    ports:
+      - "${LITELLM_PORT:-4000}:4000"
+    volumes:
+      - ../.local/litellm/config.yaml:/app/config.yaml:ro
+    command:
+      - --config
+      - /app/config.yaml
+      - --port
+      - "4000"
+      - --num_workers
+      - ${LITELLM_NUM_WORKERS:-4}
+    depends_on:
+      - litellm-postgres

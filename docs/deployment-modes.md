@@ -3,7 +3,7 @@
 reduOS is designed around one core loop:
 
 ```text
-event -> Supabase record -> Ollama/DeepSeek insight -> Qdrant memory -> memory search -> action -> feedback
+event -> Supabase record -> AI insight -> Qdrant memory -> memory search -> action -> feedback
 ```
 
 The smallest official tier should still include that full loop. That means local AI and Qdrant are part of the smallest complete reduOS deployment, not optional extras.
@@ -83,7 +83,7 @@ VM 1: Collector
 VM 2: Supabase
 VM 3: Qdrant
 VM 4: Ollama + DeepSeek
-VM 5: Activepieces or another automation receiver
+VM 5: LangGraph, Activepieces, or another automation receiver
 ```
 
 You can also combine services:
@@ -199,12 +199,17 @@ Expected embedding size with the default model:
 768
 ```
 
-### Ollama
+### AI Provider
+
+The collector can use local Ollama directly, LiteLLM as an OpenAI-compatible gateway, a direct OpenAI-compatible endpoint, or deterministic fallback mode.
+
+Local Ollama:
 
 Collector needs:
 
-```text
+```env
 AI_ENABLED=true
+AI_PROVIDER=ollama
 OLLAMA_URL
 OLLAMA_MODEL=deepseek-r1:1.5b
 OLLAMA_EMBED_MODEL=nomic-embed-text
@@ -226,6 +231,46 @@ OLLAMA_HOST=0.0.0.0:11434
 ```
 
 Only expose this on a trusted private network or behind authentication.
+
+LiteLLM gateway:
+
+```env
+AI_ENABLED=true
+AI_PROVIDER=litellm
+AI_CHAT_BASE_URL=http://litellm.example.internal:4000/v1
+AI_CHAT_API_KEY=replace-with-litellm-master-key
+AI_CHAT_MODEL=local-deepseek
+AI_EMBEDDING_BASE_URL=http://litellm.example.internal:4000/v1
+AI_EMBEDDING_API_KEY=replace-with-litellm-master-key
+AI_EMBEDDING_MODEL=local-embeddings
+```
+
+Start the local modular LiteLLM service with:
+
+```bash
+npm run modular:litellm:up
+```
+
+Direct OpenAI-compatible gateway:
+
+```env
+AI_PROVIDER=openai-compatible
+AI_CHAT_BASE_URL=https://ai.example.com/v1
+AI_CHAT_API_KEY=replace-with-key
+AI_CHAT_MODEL=gpt-4o-mini
+AI_EMBEDDING_BASE_URL=https://ai.example.com/v1
+AI_EMBEDDING_API_KEY=replace-with-key
+AI_EMBEDDING_MODEL=text-embedding-3-small
+```
+
+No model calls:
+
+```env
+AI_ENABLED=false
+AI_PROVIDER=fallback
+```
+
+See [LiteLLM AI Gateway](./litellm.md) and [AI Provider Modes](./ai-provider-modes.md).
 
 ### Automation
 
@@ -281,7 +326,10 @@ For the modular tier, allow these connections:
 | Users/integrations | Collector | `3005` or HTTPS proxy | Event ingestion |
 | Collector | Supabase API | `8000` or HTTPS | Store/query records |
 | Collector | Qdrant | `6333` | Store/search vector memory |
-| Collector | Ollama | `11434` | Generate insights and embeddings |
+| Collector | Ollama | `11434` | Generate local insights and embeddings |
+| Collector | LiteLLM | `4000` | Route OpenAI-compatible model calls |
+| LangGraph | Collector | `3005` or HTTPS | Search memory and optionally record workflow results |
+| LangGraph | LiteLLM/Ollama | `4000`/`11434` | Run multi-step agent reasoning |
 | Collector | Automation webhook | app-specific | Trigger workflow |
 | Admin | Supabase Studio | `3000` or HTTPS | Inspect data |
 
@@ -301,8 +349,8 @@ npm run demo:memory
 Then modularize one dependency at a time:
 
 ```text
-1. Move Ollama to a separate VM.
-2. Update OLLAMA_URL in the collector env.
+1. Move Ollama to a separate VM, or add LiteLLM in front of it.
+2. Update OLLAMA_URL, or set AI_PROVIDER=litellm and AI_CHAT_BASE_URL.
 3. Run npm run doctor.
 4. Run npm run demo:onboarding.
 5. Move Qdrant to a separate VM.
@@ -335,7 +383,7 @@ Implemented now:
 ```text
 Smallest complete tier on one VM
 Collector env vars that can point to remote Supabase/Qdrant/Ollama
-Modular compose files for collector, Qdrant, and Ollama
+Modular compose files for collector, Qdrant, Ollama, LiteLLM, and LangGraph
 Doctor/status/logs/reset lifecycle commands
 Qdrant semantic memory search
 Deployment documentation

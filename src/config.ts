@@ -27,10 +27,17 @@ const envSchema = z.object({
   QDRANT_FALLBACK_EMBEDDINGS: envBoolean(true),
 
   AI_ENABLED: envBoolean(false),
+  AI_PROVIDER: z.enum(["fallback", "ollama", "litellm", "openai-compatible"]).default("ollama"),
   DEBUG_AI_RAW: envBoolean(false),
   OLLAMA_URL: z.string().url().default("http://127.0.0.1:11434"),
   OLLAMA_MODEL: z.string().default("deepseek-r1:8b"),
   OLLAMA_EMBED_MODEL: z.string().default("nomic-embed-text"),
+  AI_CHAT_BASE_URL: z.string().url().optional().or(z.literal("")).default(""),
+  AI_CHAT_API_KEY: z.string().optional().default(""),
+  AI_CHAT_MODEL: z.string().optional().default(""),
+  AI_EMBEDDING_BASE_URL: z.string().url().optional().or(z.literal("")).default(""),
+  AI_EMBEDDING_API_KEY: z.string().optional().default(""),
+  AI_EMBEDDING_MODEL: z.string().optional().default(""),
 
   LANGFUSE_ENABLED: envBoolean(false),
   LANGFUSE_HOST: z.string().url().optional().or(z.literal("")).default(""),

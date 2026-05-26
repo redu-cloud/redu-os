@@ -1,0 +1,838 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+  - python3
+  - python3-venv
+  - python3-pip
+  - curl
+  - jq
+  - openssl
+  - psmisc
+
+write_files:
+  - path: /root/langgraph-demo.env
+    permissions: "0600"
+    owner: root:root
+    content: |
+      # Public URL for users.
+      # Leave empty to auto-detect public IP and use http://IP:3010
+      LANGGRAPH_PUBLIC_URL=""
+
+      # LangGraph API service
+      LANGGRAPH_PORT=3010
+      LANGGRAPH_API_KEY=AUTO_GENERATE
+      LANGGRAPH_APP_DIR=/opt/langgraph-agent
+
+      # AI provider
+      # Works best with your Ollama/DeepSeek VM.
+      # Example: OLLAMA_URL=http://10.1.0.224:11434
+      AI_ENABLED=true
+      OLLAMA_URL=http://YOUR_OLLAMA_VM_IP:11434
+      OLLAMA_MODEL=deepseek-r1:1.5b
+
+      # Qdrant memory bridge from your Qdrant template.
+      # Optional. If disabled or unreachable, LangGraph still works without memory.
+      MEMORY_ENABLED=false
+      QDRANT_BRIDGE_URL=http://YOUR_QDRANT_VM_IP:3002
+      QDRANT_BRIDGE_API_KEY=YOUR_QDRANT_BRIDGE_API_KEY_HERE
+      MEMORY_SEARCH_LIMIT=5
+
+      # reduOS collector integration.
+      # Optional. When enabled, successful runs can be recorded back into reduOS.
+      REDUOS_COLLECTOR_ENABLED=false
+      REDUOS_COLLECTOR_URL=http://YOUR_COLLECTOR_VM_IP:8080
+      REDUOS_COLLECTOR_API_KEY=YOUR_COLLECTOR_API_KEY_HERE
+
+      # Automation webhook.
+      # Optional. This can point to Activepieces, n8n, Discord bridge, or your collector automation endpoint.
+      AUTOMATION_ENABLED=false
+      AUTOMATION_WEBHOOK_URL=http://YOUR_AUTOMATION_WEBHOOK_URL
+      AUTOMATION_WEBHOOK_API_KEY=
+
+      # Runtime behavior
+      REQUIRE_HUMAN_APPROVAL_FOR_HIGH_RISK=true
+      DEMO_SEED_ON_BOOT=true
+
+      # Set true only if reusing a broken test VM and you want to reinstall the app cleanly.
+      LANGGRAPH_RESET_APP_ON_BOOT=false
+
+  - path: /usr/local/bin/langgraph_bootstrap.sh
+    permissions: "0755"
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      LOG_FILE="/var/log/langgraph-bootstrap.log"
+      exec > >(tee -a "$LOG_FILE") 2>&1
+
+      echo "========================================"
+      echo " redu.cloud LangGraph bootstrap"
+      echo " Started: $(date -Is)"
+      echo "========================================"
+
+      source /root/langgraph-demo.env
+
+      APP_DIR="${LANGGRAPH_APP_DIR:-/opt/langgraph-agent}"
+      VENV_DIR="${APP_DIR}/.venv"
+
+      if [ -z "${LANGGRAPH_PUBLIC_URL:-}" ]; then
+        PUBLIC_IP="$(curl -fsS --max-time 10 https://api.ipify.org || true)"
+        if [ -z "$PUBLIC_IP" ]; then
+          PUBLIC_IP="$(hostname -I | awk '{print $1}')"
+        fi
+        LANGGRAPH_PUBLIC_URL="http://${PUBLIC_IP}:${LANGGRAPH_PORT}"
+      else
+        PUBLIC_IP="$(echo "$LANGGRAPH_PUBLIC_URL" | sed -E 's#^https?://##' | cut -d: -f1 | cut -d/ -f1)"
+      fi
+
+      if ! echo "$LANGGRAPH_PUBLIC_URL" | grep -Eq '^https?://'; then
+        LANGGRAPH_PUBLIC_URL="https://${LANGGRAPH_PUBLIC_URL}"
+      fi
+
+      if [ "${LANGGRAPH_API_KEY:-AUTO_GENERATE}" = "AUTO_GENERATE" ]; then
+        LANGGRAPH_API_KEY="$(openssl rand -hex 32)"
+      fi
+
+      if [ "${AI_ENABLED:-true}" = "true" ] && echo "${OLLAMA_URL:-}" | grep -q "YOUR_OLLAMA_VM_IP"; then
+        echo "WARNING: AI_ENABLED=true but OLLAMA_URL is still a placeholder."
+        echo "LangGraph will start, but it will use deterministic fallback insights until OLLAMA_URL is updated."
+      fi
+
+      if [ "${MEMORY_ENABLED:-false}" = "true" ] && echo "${QDRANT_BRIDGE_URL:-}" | grep -q "YOUR_QDRANT_VM_IP"; then
+        echo "WARNING: MEMORY_ENABLED=true but QDRANT_BRIDGE_URL is still a placeholder. Disabling memory for first boot."
+        MEMORY_ENABLED=false
+      fi
+
+      if [ "${REDUOS_COLLECTOR_ENABLED:-false}" = "true" ] && echo "${REDUOS_COLLECTOR_URL:-}" | grep -q "YOUR_COLLECTOR_VM_IP"; then
+        echo "WARNING: REDUOS_COLLECTOR_ENABLED=true but REDUOS_COLLECTOR_URL is still a placeholder. Disabling collector integration for first boot."
+        REDUOS_COLLECTOR_ENABLED=false
+      fi
+
+      if [ "${AUTOMATION_ENABLED:-false}" = "true" ] && echo "${AUTOMATION_WEBHOOK_URL:-}" | grep -q "YOUR_AUTOMATION_WEBHOOK_URL"; then
+        echo "WARNING: AUTOMATION_ENABLED=true but AUTOMATION_WEBHOOK_URL is still a placeholder. Disabling automation for first boot."
+        AUTOMATION_ENABLED=false
+      fi
+
+      echo "Writing normalized /root/langgraph-demo.env..."
+
+      cat > /root/langgraph-demo.env <<EOF_ENV
+      LANGGRAPH_PUBLIC_URL="${LANGGRAPH_PUBLIC_URL}"
+      LANGGRAPH_PORT=${LANGGRAPH_PORT}
+      LANGGRAPH_API_KEY=${LANGGRAPH_API_KEY}
+      LANGGRAPH_APP_DIR=${APP_DIR}
+
+      AI_ENABLED=${AI_ENABLED}
+      OLLAMA_URL=${OLLAMA_URL}
+      OLLAMA_MODEL=${OLLAMA_MODEL}
+
+      MEMORY_ENABLED=${MEMORY_ENABLED}
+      QDRANT_BRIDGE_URL=${QDRANT_BRIDGE_URL}
+      QDRANT_BRIDGE_API_KEY=${QDRANT_BRIDGE_API_KEY}
+      MEMORY_SEARCH_LIMIT=${MEMORY_SEARCH_LIMIT}
+
+      REDUOS_COLLECTOR_ENABLED=${REDUOS_COLLECTOR_ENABLED}
+      REDUOS_COLLECTOR_URL=${REDUOS_COLLECTOR_URL}
+      REDUOS_COLLECTOR_API_KEY=${REDUOS_COLLECTOR_API_KEY}
+
+      AUTOMATION_ENABLED=${AUTOMATION_ENABLED}
+      AUTOMATION_WEBHOOK_URL=${AUTOMATION_WEBHOOK_URL}
+      AUTOMATION_WEBHOOK_API_KEY=${AUTOMATION_WEBHOOK_API_KEY}
+
+      REQUIRE_HUMAN_APPROVAL_FOR_HIGH_RISK=${REQUIRE_HUMAN_APPROVAL_FOR_HIGH_RISK}
+      DEMO_SEED_ON_BOOT=${DEMO_SEED_ON_BOOT}
+      LANGGRAPH_RESET_APP_ON_BOOT=${LANGGRAPH_RESET_APP_ON_BOOT}
+      EOF_ENV
+
+      chmod 600 /root/langgraph-demo.env
+      source /root/langgraph-demo.env
+
+      echo "Preparing app directory: ${APP_DIR}"
+
+      if [ "${LANGGRAPH_RESET_APP_ON_BOOT}" = "true" ]; then
+        rm -rf "$APP_DIR"
+      fi
+
+      mkdir -p "$APP_DIR"
+      cd "$APP_DIR"
+
+      echo "Writing requirements.txt..."
+
+      cat > requirements.txt <<'EOF_REQ'
+      fastapi>=0.115.0
+      uvicorn[standard]>=0.30.0
+      pydantic>=2.8.0
+      httpx>=0.27.0
+      langgraph>=1.0.0
+      langchain-core>=1.0.0
+      EOF_REQ
+
+      echo "Creating Python virtual environment..."
+      python3 -m venv "$VENV_DIR"
+      "$VENV_DIR/bin/pip" install --upgrade pip wheel
+      "$VENV_DIR/bin/pip" install -r requirements.txt
+
+      echo "Writing LangGraph API app..."
+
+      cat > app.py <<'EOF_APP'
+      import json
+      import os
+      import re
+      import uuid
+      from datetime import datetime, timezone
+      from typing import Any, Dict, List, Optional, TypedDict
+
+      import httpx
+      from fastapi import FastAPI, Header, HTTPException, Request
+      from pydantic import BaseModel, Field
+      from langgraph.graph import StateGraph, END
+
+
+      def env_bool(name: str, default: bool = False) -> bool:
+          value = os.getenv(name)
+          if value is None:
+              return default
+          return value.lower() in {"1", "true", "yes", "on"}
+
+
+      APP_NAME = "redu.cloud LangGraph Agent API"
+      LANGGRAPH_API_KEY = os.getenv("LANGGRAPH_API_KEY", "")
+      AI_ENABLED = env_bool("AI_ENABLED", True)
+      OLLAMA_URL = os.getenv("OLLAMA_URL", "")
+      OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "deepseek-r1:1.5b")
+      MEMORY_ENABLED = env_bool("MEMORY_ENABLED", False)
+      QDRANT_BRIDGE_URL = os.getenv("QDRANT_BRIDGE_URL", "")
+      QDRANT_BRIDGE_API_KEY = os.getenv("QDRANT_BRIDGE_API_KEY", "")
+      MEMORY_SEARCH_LIMIT = int(os.getenv("MEMORY_SEARCH_LIMIT", "5"))
+      REDUOS_COLLECTOR_ENABLED = env_bool("REDUOS_COLLECTOR_ENABLED", False)
+      REDUOS_COLLECTOR_URL = os.getenv("REDUOS_COLLECTOR_URL", "")
+      REDUOS_COLLECTOR_API_KEY = os.getenv("REDUOS_COLLECTOR_API_KEY", "")
+      AUTOMATION_ENABLED = env_bool("AUTOMATION_ENABLED", False)
+      AUTOMATION_WEBHOOK_URL = os.getenv("AUTOMATION_WEBHOOK_URL", "")
+      AUTOMATION_WEBHOOK_API_KEY = os.getenv("AUTOMATION_WEBHOOK_API_KEY", "")
+      REQUIRE_HUMAN_APPROVAL_FOR_HIGH_RISK = env_bool("REQUIRE_HUMAN_APPROVAL_FOR_HIGH_RISK", True)
+
+
+      class AgentRequest(BaseModel):
+          type: str = Field(default="generic", description="incident, support, onboarding, product_signal, or generic")
+          source: str = Field(default="manual")
+          severity: str = Field(default="medium")
+          message: str
+          user_email: Optional[str] = None
+          user_name: Optional[str] = None
+          metadata: Dict[str, Any] = Field(default_factory=dict)
+          require_approval: Optional[bool] = None
+          trigger_automation: bool = False
+          record_to_collector: bool = False
+
+
+      class AgentState(TypedDict, total=False):
+          run_id: str
+          event: Dict[str, Any]
+          memory_query: str
+          similar_context: List[Dict[str, Any]]
+          ai_raw: str
+          insight: Dict[str, Any]
+          action: Dict[str, Any]
+          automation_result: Dict[str, Any]
+          collector_result: Dict[str, Any]
+          warnings: List[str]
+
+
+      app = FastAPI(title=APP_NAME, version="1.0.0")
+
+
+      def now_iso() -> str:
+          return datetime.now(timezone.utc).isoformat()
+
+
+      def require_api_key(x_api_key: Optional[str]) -> None:
+          if not LANGGRAPH_API_KEY or x_api_key != LANGGRAPH_API_KEY:
+              raise HTTPException(status_code=401, detail="Invalid API key")
+
+
+      def is_placeholder(value: str) -> bool:
+          return "YOUR_" in (value or "") or value.strip() == ""
+
+
+      def safe_json_from_text(text: str) -> Optional[Dict[str, Any]]:
+          text = text.strip()
+          text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+          try:
+              value = json.loads(text)
+              return value if isinstance(value, dict) else None
+          except Exception:
+              pass
+
+          match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+          if not match:
+              return None
+
+          try:
+              value = json.loads(match.group(0))
+              return value if isinstance(value, dict) else None
+          except Exception:
+              return None
+
+
+      def fallback_insight(event: Dict[str, Any], reason: str) -> Dict[str, Any]:
+          severity = str(event.get("severity") or "medium").lower()
+          event_type = str(event.get("type") or "generic").lower()
+          message = str(event.get("message") or "")
+
+          priority = "medium"
+          if severity in {"critical", "high"} or any(word in message.lower() for word in ["down", "failed", "error", "incident", "outage"]):
+              priority = "high"
+          if event_type in {"onboarding", "lead", "signup"}:
+              priority = "medium"
+
+          if event_type == "incident":
+              category = "Incident Response"
+              action = "Investigate recent errors, compare with similar incidents, and notify the team."
+          elif event_type == "support":
+              category = "Support Triage"
+              action = "Draft a concise support reply and check similar previous tickets."
+          elif event_type == "onboarding":
+              category = "Startup Onboarding"
+              action = "Classify the lead and recommend a tailored onboarding path."
+          elif event_type == "product_signal":
+              category = "Product Intelligence"
+              action = "Look for repeated patterns and recommend a product improvement."
+          else:
+              category = "General Operations"
+              action = "Summarize the event, check memory, and recommend the next operational step."
+
+          return {
+              "category": category,
+              "priority": priority,
+              "sentiment": "neutral",
+              "summary": message[:280] if message else "No message provided.",
+              "recommended_action": action,
+              "risk_level": "high" if priority == "high" else "medium",
+              "requires_human_approval": priority == "high" and REQUIRE_HUMAN_APPROVAL_FOR_HIGH_RISK,
+              "confidence": 0.45,
+              "fallback": True,
+              "fallback_reason": reason,
+          }
+
+
+      async def search_memory(state: AgentState) -> AgentState:
+          state.setdefault("warnings", [])
+          event = state["event"]
+          query = state.get("memory_query") or f"{event.get('type')} {event.get('source')} {event.get('severity')} {event.get('message')}"
+          state["memory_query"] = query
+
+          if not MEMORY_ENABLED:
+              state["similar_context"] = []
+              return state
+
+          if is_placeholder(QDRANT_BRIDGE_URL) or is_placeholder(QDRANT_BRIDGE_API_KEY):
+              state["similar_context"] = []
+              state["warnings"].append("Memory is enabled but Qdrant bridge config is missing or placeholder.")
+              return state
+
+          try:
+              async with httpx.AsyncClient(timeout=20) as client:
+                  resp = await client.post(
+                      f"{QDRANT_BRIDGE_URL.rstrip('/')}/api/memory/search",
+                      headers={"X-API-Key": QDRANT_BRIDGE_API_KEY},
+                      json={"query": query, "limit": MEMORY_SEARCH_LIMIT},
+                  )
+              if resp.status_code >= 400:
+                  state["warnings"].append(f"Memory search failed: HTTP {resp.status_code} {resp.text[:300]}")
+                  state["similar_context"] = []
+                  return state
+              data = resp.json()
+              state["similar_context"] = data.get("results") or data.get("points") or data.get("matches") or []
+          except Exception as exc:
+              state["warnings"].append(f"Memory search error: {exc}")
+              state["similar_context"] = []
+
+          return state
+
+
+      async def call_ollama_for_insight(event: Dict[str, Any], similar_context: List[Dict[str, Any]]) -> Dict[str, Any]:
+          if not AI_ENABLED:
+              return fallback_insight(event, "AI_ENABLED=false")
+          if is_placeholder(OLLAMA_URL):
+              return fallback_insight(event, "OLLAMA_URL is empty or placeholder")
+
+          system = """
+      You are the AI operations brain for reduOS, an AI operative system for startups.
+      Analyze startup operations events and return only valid JSON.
+      Be practical. Prefer safe human approval for high-risk actions.
+      """.strip()
+
+          user = {
+              "task": "Analyze this startup operations event and recommend the next step.",
+              "event": event,
+              "similar_context": similar_context[:5],
+              "required_json_schema": {
+                  "category": "Incident Response | Support Triage | Startup Onboarding | Product Intelligence | General Operations",
+                  "priority": "low | medium | high | critical",
+                  "sentiment": "negative | neutral | positive",
+                  "summary": "short operational summary",
+                  "recommended_action": "specific next step",
+                  "risk_level": "low | medium | high",
+                  "requires_human_approval": True,
+                  "confidence": 0.0,
+              },
+          }
+
+          try:
+              async with httpx.AsyncClient(timeout=90) as client:
+                  resp = await client.post(
+                      f"{OLLAMA_URL.rstrip('/')}/api/chat",
+                      json={
+                          "model": OLLAMA_MODEL,
+                          "stream": False,
+                          "messages": [
+                              {"role": "system", "content": system},
+                              {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
+                          ],
+                      },
+                  )
+              body = resp.text
+              if resp.status_code >= 400:
+                  return fallback_insight(event, f"Ollama HTTP {resp.status_code}: {body[:200]}")
+
+              data = resp.json()
+              raw = data.get("message", {}).get("content") or data.get("response") or ""
+              parsed = safe_json_from_text(raw)
+              if not parsed:
+                  insight = fallback_insight(event, "Ollama did not return parseable JSON")
+                  insight["ai_raw"] = raw[:2000]
+                  return insight
+
+              parsed.setdefault("category", "General Operations")
+              parsed.setdefault("priority", "medium")
+              parsed.setdefault("sentiment", "neutral")
+              parsed.setdefault("summary", str(event.get("message", ""))[:280])
+              parsed.setdefault("recommended_action", "Review the event and decide the next step.")
+              parsed.setdefault("risk_level", "medium")
+              parsed.setdefault("requires_human_approval", False)
+              parsed.setdefault("confidence", 0.7)
+              parsed["fallback"] = False
+              return parsed
+          except Exception as exc:
+              return fallback_insight(event, f"Ollama error: {exc}")
+
+
+      async def analyze_event(state: AgentState) -> AgentState:
+          insight = await call_ollama_for_insight(state["event"], state.get("similar_context", []))
+          state["insight"] = insight
+          return state
+
+
+      async def decide_action(state: AgentState) -> AgentState:
+          event = state["event"]
+          insight = state["insight"]
+          requested_approval = event.get("require_approval")
+
+          requires_approval = bool(insight.get("requires_human_approval"))
+          if requested_approval is not None:
+              requires_approval = bool(requested_approval)
+
+          status = "pending_approval" if requires_approval else "recommended"
+          if event.get("trigger_automation") and not requires_approval:
+              status = "ready_for_automation"
+
+          state["action"] = {
+              "id": str(uuid.uuid4()),
+              "status": status,
+              "action_type": "automation" if event.get("trigger_automation") else "recommendation",
+              "target": "automation_webhook" if event.get("trigger_automation") else "human_operator",
+              "recommended_action": insight.get("recommended_action"),
+              "requires_human_approval": requires_approval,
+              "created_at": now_iso(),
+          }
+          return state
+
+
+      async def maybe_trigger_automation(state: AgentState) -> AgentState:
+          event = state["event"]
+          action = state["action"]
+
+          if not event.get("trigger_automation"):
+              state["automation_result"] = {"skipped": True, "reason": "trigger_automation=false"}
+              return state
+
+          if action.get("requires_human_approval"):
+              state["automation_result"] = {"skipped": True, "reason": "human_approval_required"}
+              return state
+
+          if not AUTOMATION_ENABLED or is_placeholder(AUTOMATION_WEBHOOK_URL):
+              state["automation_result"] = {"skipped": True, "reason": "automation disabled or webhook missing"}
+              return state
+
+          headers = {"Content-Type": "application/json"}
+          if AUTOMATION_WEBHOOK_API_KEY:
+              headers["X-API-Key"] = AUTOMATION_WEBHOOK_API_KEY
+
+          payload = {
+              "run_id": state["run_id"],
+              "event": event,
+              "insight": state["insight"],
+              "action": action,
+              "similar_context": state.get("similar_context", []),
+          }
+
+          try:
+              async with httpx.AsyncClient(timeout=30) as client:
+                  resp = await client.post(AUTOMATION_WEBHOOK_URL, headers=headers, json=payload)
+              state["automation_result"] = {
+                  "ok": resp.status_code < 400,
+                  "status": resp.status_code,
+                  "body": resp.text[:1000],
+              }
+          except Exception as exc:
+              state["automation_result"] = {"ok": False, "error": str(exc)}
+
+          return state
+
+
+      async def maybe_record_to_collector(state: AgentState) -> AgentState:
+          event = state["event"]
+
+          if not event.get("record_to_collector"):
+              state["collector_result"] = {"skipped": True, "reason": "record_to_collector=false"}
+              return state
+
+          if not REDUOS_COLLECTOR_ENABLED or is_placeholder(REDUOS_COLLECTOR_URL) or is_placeholder(REDUOS_COLLECTOR_API_KEY):
+              state["collector_result"] = {"skipped": True, "reason": "collector disabled or config missing"}
+              return state
+
+          payload = {
+              "type": event.get("type", "generic"),
+              "source": "langgraph",
+              "severity": event.get("severity", "medium"),
+              "message": event.get("message", ""),
+              "user_email": event.get("user_email"),
+              "user_name": event.get("user_name"),
+              "metadata": {
+                  **(event.get("metadata") or {}),
+                  "langgraph_run_id": state["run_id"],
+                  "langgraph_insight": state.get("insight"),
+                  "langgraph_action": state.get("action"),
+              },
+          }
+
+          try:
+              async with httpx.AsyncClient(timeout=30) as client:
+                  resp = await client.post(
+                      f"{REDUOS_COLLECTOR_URL.rstrip('/')}/v1/events",
+                      headers={"X-API-Key": REDUOS_COLLECTOR_API_KEY, "Content-Type": "application/json"},
+                      json=payload,
+                  )
+              state["collector_result"] = {
+                  "ok": resp.status_code < 400,
+                  "status": resp.status_code,
+                  "body": resp.text[:1000],
+              }
+          except Exception as exc:
+              state["collector_result"] = {"ok": False, "error": str(exc)}
+
+          return state
+
+
+      def build_graph():
+          graph = StateGraph(AgentState)
+          graph.add_node("search_memory", search_memory)
+          graph.add_node("analyze_event", analyze_event)
+          graph.add_node("decide_action", decide_action)
+          graph.add_node("maybe_trigger_automation", maybe_trigger_automation)
+          graph.add_node("maybe_record_to_collector", maybe_record_to_collector)
+
+          graph.set_entry_point("search_memory")
+          graph.add_edge("search_memory", "analyze_event")
+          graph.add_edge("analyze_event", "decide_action")
+          graph.add_edge("decide_action", "maybe_trigger_automation")
+          graph.add_edge("maybe_trigger_automation", "maybe_record_to_collector")
+          graph.add_edge("maybe_record_to_collector", END)
+          return graph.compile()
+
+
+      compiled_graph = build_graph()
+
+
+      @app.get("/")
+      async def root():
+          return {
+              "ok": True,
+              "service": APP_NAME,
+              "description": "LangGraph agent workflow engine for reduOS.",
+              "endpoints": {
+                  "health": "GET /health",
+                  "invoke": "POST /v1/graph/invoke",
+                  "incident": "POST /v1/agents/incident",
+                  "support": "POST /v1/agents/support",
+                  "onboarding": "POST /v1/agents/onboarding",
+                  "product_signal": "POST /v1/agents/product-signal",
+              },
+              "ai_enabled": AI_ENABLED,
+              "memory_enabled": MEMORY_ENABLED,
+              "collector_enabled": REDUOS_COLLECTOR_ENABLED,
+              "automation_enabled": AUTOMATION_ENABLED,
+          }
+
+
+      @app.get("/health")
+      async def health():
+          return {
+              "ok": True,
+              "service": "langgraph-agent",
+              "time": now_iso(),
+              "langgraph": "ready",
+              "ai_enabled": AI_ENABLED,
+              "ollama_url_configured": bool(OLLAMA_URL) and not is_placeholder(OLLAMA_URL),
+              "memory_enabled": MEMORY_ENABLED,
+              "qdrant_bridge_configured": bool(QDRANT_BRIDGE_URL) and not is_placeholder(QDRANT_BRIDGE_URL),
+          }
+
+
+      async def run_agent(payload: AgentRequest) -> Dict[str, Any]:
+          run_id = str(uuid.uuid4())
+          event = payload.model_dump()
+          event["received_at"] = now_iso()
+          state: AgentState = {
+              "run_id": run_id,
+              "event": event,
+              "warnings": [],
+          }
+          result = await compiled_graph.ainvoke(state)
+          return {
+              "ok": True,
+              "run_id": run_id,
+              "event": event,
+              "similar_context": result.get("similar_context", []),
+              "insight": result.get("insight", {}),
+              "action": result.get("action", {}),
+              "automation_result": result.get("automation_result", {}),
+              "collector_result": result.get("collector_result", {}),
+              "warnings": result.get("warnings", []),
+          }
+
+
+      @app.post("/v1/graph/invoke")
+      async def invoke(payload: AgentRequest, x_api_key: Optional[str] = Header(default=None)):
+          require_api_key(x_api_key)
+          return await run_agent(payload)
+
+
+      @app.post("/v1/agents/incident")
+      async def incident(payload: AgentRequest, x_api_key: Optional[str] = Header(default=None)):
+          require_api_key(x_api_key)
+          payload.type = "incident"
+          payload.severity = payload.severity or "high"
+          return await run_agent(payload)
+
+
+      @app.post("/v1/agents/support")
+      async def support(payload: AgentRequest, x_api_key: Optional[str] = Header(default=None)):
+          require_api_key(x_api_key)
+          payload.type = "support"
+          return await run_agent(payload)
+
+
+      @app.post("/v1/agents/onboarding")
+      async def onboarding(payload: AgentRequest, x_api_key: Optional[str] = Header(default=None)):
+          require_api_key(x_api_key)
+          payload.type = "onboarding"
+          return await run_agent(payload)
+
+
+      @app.post("/v1/agents/product-signal")
+      async def product_signal(payload: AgentRequest, x_api_key: Optional[str] = Header(default=None)):
+          require_api_key(x_api_key)
+          payload.type = "product_signal"
+          return await run_agent(payload)
+
+
+      @app.exception_handler(Exception)
+      async def unhandled_exception_handler(request: Request, exc: Exception):
+          return {
+              "ok": False,
+              "error": str(exc),
+              "path": str(request.url.path),
+          }
+      EOF_APP
+
+      echo "Writing systemd service..."
+
+      cat > /etc/systemd/system/langgraph-agent.service <<EOF_SERVICE
+      [Unit]
+      Description=redu.cloud LangGraph Agent API
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      WorkingDirectory=${APP_DIR}
+      EnvironmentFile=/root/langgraph-demo.env
+      ExecStart=${VENV_DIR}/bin/uvicorn app:app --host 0.0.0.0 --port ${LANGGRAPH_PORT}
+      Restart=always
+      RestartSec=5
+      User=root
+
+      [Install]
+      WantedBy=multi-user.target
+      EOF_SERVICE
+
+      echo "Freeing port if needed..."
+      fuser -k "${LANGGRAPH_PORT}/tcp" 2>/dev/null || true
+
+      systemctl daemon-reload
+      systemctl enable --now langgraph-agent
+
+      echo "Waiting for LangGraph API..."
+
+      LANGGRAPH_READY=0
+      for i in $(seq 1 60); do
+        if curl -fsS "http://127.0.0.1:${LANGGRAPH_PORT}/health" >/dev/null 2>&1; then
+          LANGGRAPH_READY=1
+          echo "LangGraph API is reachable."
+          break
+        fi
+
+        echo "Waiting for LangGraph API... attempt $i/60"
+        sleep 3
+      done
+
+      if [ "$LANGGRAPH_READY" != "1" ]; then
+        echo "LangGraph API did not become reachable."
+        systemctl status langgraph-agent --no-pager || true
+        journalctl -u langgraph-agent --no-pager -n 150 || true
+        exit 1
+      fi
+
+      if [ "${DEMO_SEED_ON_BOOT}" = "true" ]; then
+        echo "Running demo incident request..."
+        curl -sS -X POST "http://127.0.0.1:${LANGGRAPH_PORT}/v1/agents/incident" \
+          -H "Content-Type: application/json" \
+          -H "X-API-Key: ${LANGGRAPH_API_KEY}" \
+          -d '{
+            "source": "uptime-kuma",
+            "severity": "high",
+            "message": "API health check is failing after latest deployment.",
+            "metadata": {
+              "service": "api",
+              "environment": "demo",
+              "demo": true
+            },
+            "trigger_automation": false,
+            "record_to_collector": false
+          }' | tee /root/langgraph-demo-incident-response.json | jq . || true
+      fi
+
+      echo "Writing output file..."
+
+      cat > /root/langgraph-demo-output.txt <<EOF_OUTPUT
+      redu.cloud LangGraph agent API is ready.
+
+      Public URL:
+      ${LANGGRAPH_PUBLIC_URL}
+
+      Local URL:
+      http://127.0.0.1:${LANGGRAPH_PORT}
+
+      API key:
+      ${LANGGRAPH_API_KEY}
+
+      Main endpoints:
+      GET  ${LANGGRAPH_PUBLIC_URL}/health
+      POST ${LANGGRAPH_PUBLIC_URL}/v1/graph/invoke
+      POST ${LANGGRAPH_PUBLIC_URL}/v1/agents/incident
+      POST ${LANGGRAPH_PUBLIC_URL}/v1/agents/support
+      POST ${LANGGRAPH_PUBLIC_URL}/v1/agents/onboarding
+      POST ${LANGGRAPH_PUBLIC_URL}/v1/agents/product-signal
+
+      Test health:
+
+      curl -sS "${LANGGRAPH_PUBLIC_URL}/health" | jq
+
+      Test incident agent:
+
+      curl -sS -X POST "${LANGGRAPH_PUBLIC_URL}/v1/agents/incident" \\
+        -H "Content-Type: application/json" \\
+        -H "X-API-Key: ${LANGGRAPH_API_KEY}" \\
+        -d '{
+          "source": "uptime-kuma",
+          "severity": "high",
+          "message": "API health check is failing after latest deployment.",
+          "metadata": {
+            "service": "api",
+            "environment": "production"
+          },
+          "trigger_automation": false,
+          "record_to_collector": false
+        }' | jq
+
+      Test support agent:
+
+      curl -sS -X POST "${LANGGRAPH_PUBLIC_URL}/v1/agents/support" \\
+        -H "Content-Type: application/json" \\
+        -H "X-API-Key: ${LANGGRAPH_API_KEY}" \\
+        -d '{
+          "source": "zammad",
+          "severity": "medium",
+          "message": "Customer says their instance is unreachable after attaching a volume.",
+          "user_email": "customer@example.com",
+          "metadata": {
+            "ticket_id": "demo-123"
+          }
+        }' | jq
+
+      To connect Ollama/DeepSeek:
+      edit /root/langgraph-demo.env and set:
+      AI_ENABLED=true
+      OLLAMA_URL=http://YOUR_OLLAMA_VM_IP:11434
+      OLLAMA_MODEL=deepseek-r1:1.5b
+      then run:
+      systemctl restart langgraph-agent
+
+      To connect Qdrant memory bridge:
+      edit /root/langgraph-demo.env and set:
+      MEMORY_ENABLED=true
+      QDRANT_BRIDGE_URL=http://YOUR_QDRANT_VM_IP:3002
+      QDRANT_BRIDGE_API_KEY=YOUR_QDRANT_BRIDGE_API_KEY
+      then run:
+      systemctl restart langgraph-agent
+
+      To connect reduOS collector:
+      edit /root/langgraph-demo.env and set:
+      REDUOS_COLLECTOR_ENABLED=true
+      REDUOS_COLLECTOR_URL=http://YOUR_COLLECTOR_VM_IP:8080
+      REDUOS_COLLECTOR_API_KEY=YOUR_COLLECTOR_API_KEY
+      then send requests with:
+      "record_to_collector": true
+
+      To connect automation webhook:
+      edit /root/langgraph-demo.env and set:
+      AUTOMATION_ENABLED=true
+      AUTOMATION_WEBHOOK_URL=http://YOUR_WEBHOOK_URL
+      AUTOMATION_WEBHOOK_API_KEY=OPTIONAL_KEY
+      then send requests with:
+      "trigger_automation": true
+
+      Logs:
+      /var/log/langgraph-bootstrap.log
+      journalctl -u langgraph-agent -f
+
+      App directory:
+      ${APP_DIR}
+
+      Normalized config:
+      /root/langgraph-demo.env
+      EOF_OUTPUT
+
+      chmod 600 /root/langgraph-demo-output.txt
+
+      echo "========================================"
+      echo " LangGraph demo ready"
+      echo "========================================"
+      cat /root/langgraph-demo-output.txt
+
+runcmd:
+  - [ bash, -lc, "/usr/local/bin/langgraph_bootstrap.sh" ]

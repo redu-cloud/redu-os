@@ -73,7 +73,9 @@ if podman container exists redu-os-activepieces 2>/dev/null \
   || podman container exists redu-os-listmonk-postgres 2>/dev/null \
   || podman container exists zammad_zammad-railsserver_1 2>/dev/null \
   || podman container exists zammad_zammad-nginx_1 2>/dev/null \
-  || podman container exists redu-os-langfuse-web 2>/dev/null; then
+  || podman container exists redu-os-langfuse-web 2>/dev/null \
+  || podman container exists redu-os-litellm 2>/dev/null \
+  || podman container exists redu-os-langgraph 2>/dev/null; then
   echo
   echo "Optional modules:"
   if podman container exists redu-os-activepieces 2>/dev/null \
@@ -123,6 +125,13 @@ if podman container exists redu-os-activepieces 2>/dev/null \
     container_status redu-os-langfuse-minio "${LANGFUSE_MINIO_PORT:-9090}"
     container_status redu-os-langfuse-redis ""
   fi
+  if podman container exists redu-os-litellm 2>/dev/null; then
+    container_status redu-os-litellm "${LITELLM_PORT:-4000}"
+    container_status redu-os-litellm-postgres ""
+  fi
+  if podman container exists redu-os-langgraph 2>/dev/null; then
+    container_status redu-os-langgraph "${LANGGRAPH_PORT:-3010}"
+  fi
 fi
 
 echo
@@ -153,6 +162,12 @@ fi
 if podman container exists redu-os-langfuse-web 2>/dev/null; then
   service_health "Langfuse" "${LANGFUSE_URL:-http://127.0.0.1:${LANGFUSE_PORT:-3007}}"
 fi
+if podman container exists redu-os-litellm 2>/dev/null; then
+  service_health "LiteLLM" "${LITELLM_URL:-http://127.0.0.1:${LITELLM_PORT:-4000}}/v1/models" -H "Authorization: Bearer ${LITELLM_MASTER_KEY:-}"
+fi
+if podman container exists redu-os-langgraph 2>/dev/null; then
+  service_health "LangGraph" "${LANGGRAPH_URL:-http://127.0.0.1:${LANGGRAPH_PORT:-3010}}/health"
+fi
 
 echo
 echo "URLs:"
@@ -169,6 +184,8 @@ printf "  %-32s %s\n" "GlitchTip" "${GLITCHTIP_URL:-http://127.0.0.1:${GLITCHTIP
 printf "  %-32s %s\n" "Listmonk" "${LISTMONK_URL:-http://127.0.0.1:${LISTMONK_PORT:-9000}}"
 printf "  %-32s %s\n" "Zammad" "${ZAMMAD_URL:-http://127.0.0.1:${ZAMMAD_PORT:-8081}}"
 printf "  %-32s %s\n" "Langfuse" "${LANGFUSE_URL:-http://127.0.0.1:${LANGFUSE_PORT:-3007}}"
+printf "  %-32s %s\n" "LiteLLM" "${LITELLM_URL:-http://127.0.0.1:${LITELLM_PORT:-4000}}"
+printf "  %-32s %s\n" "LangGraph" "${LANGGRAPH_URL:-http://127.0.0.1:${LANGGRAPH_PORT:-3010}}"
 
 if [ -n "${DASHBOARD_AUTH_EMAIL:-}" ] && [ -n "${DASHBOARD_AUTH_PASSWORD:-}" ]; then
   echo
@@ -225,4 +242,21 @@ if [ -n "${LANGFUSE_ADMIN_EMAIL:-}" ] && [ -n "${LANGFUSE_ADMIN_PASSWORD:-}" ]; 
   printf "  %-32s %s\n" "email" "$LANGFUSE_ADMIN_EMAIL"
   printf "  %-32s %s\n" "password" "$LANGFUSE_ADMIN_PASSWORD"
   printf "  %-32s %s\n" "public key" "${LANGFUSE_PUBLIC_KEY:-}"
+fi
+
+if [ -n "${LITELLM_MASTER_KEY:-}" ]; then
+  echo
+  echo "LiteLLM:"
+  printf "  %-32s %s\n" "UI" "${LITELLM_URL:-http://127.0.0.1:${LITELLM_PORT:-4000}}/ui"
+  printf "  %-32s %s\n" "API key" "$LITELLM_MASTER_KEY"
+  printf "  %-32s %s\n" "chat model" "${AI_CHAT_MODEL:-${LITELLM_DEFAULT_CHAT_MODEL:-local-deepseek}}"
+fi
+
+if [ -n "${LANGGRAPH_API_KEY:-}" ]; then
+  echo
+  echo "LangGraph:"
+  printf "  %-32s %s\n" "URL" "${LANGGRAPH_URL:-http://127.0.0.1:${LANGGRAPH_PORT:-3010}}"
+  printf "  %-32s %s\n" "API key" "$LANGGRAPH_API_KEY"
+  printf "  %-32s %s\n" "AI provider" "${LANGGRAPH_AI_PROVIDER:-openai-compatible}"
+  printf "  %-32s %s\n" "AI model" "${LANGGRAPH_AI_MODEL:-local-deepseek}"
 fi

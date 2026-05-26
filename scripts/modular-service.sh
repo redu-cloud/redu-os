@@ -30,6 +30,8 @@ Usage:
   npm run modular:listmonk:up
   npm run modular:zammad:up
   npm run modular:langfuse:up
+  npm run modular:litellm:up
+  npm run modular:langgraph:up
   bash scripts/modular-service.sh collector up
   bash scripts/modular-service.sh qdrant logs
 
@@ -44,6 +46,8 @@ Services:
   listmonk
   zammad
   langfuse
+  litellm
+  langgraph
 
 Actions:
   up
@@ -61,7 +65,7 @@ if [ -z "$SERVICE" ] || [ "$SERVICE" = "-h" ] || [ "$SERVICE" = "--help" ]; then
 fi
 
 case "$SERVICE" in
-  collector|qdrant|ollama|activepieces|uptime|umami|glitchtip|listmonk|zammad|langfuse) ;;
+  collector|qdrant|ollama|activepieces|uptime|umami|glitchtip|listmonk|zammad|langfuse|litellm|langgraph) ;;
   *)
     echo "Unknown modular service: ${SERVICE}" >&2
     usage >&2
@@ -153,13 +157,27 @@ case "$ACTION" in
       source "${ROOT_DIR}/.env"
       set +a
     fi
+    if [ "$SERVICE" = "litellm" ]; then
+      "${ROOT_DIR}/scripts/litellm-env.sh"
+      set -a
+      # shellcheck disable=SC1091
+      source "${ROOT_DIR}/.env"
+      set +a
+    fi
+    if [ "$SERVICE" = "langgraph" ]; then
+      "${ROOT_DIR}/scripts/langgraph-env.sh"
+      set -a
+      # shellcheck disable=SC1091
+      source "${ROOT_DIR}/.env"
+      set +a
+    fi
 
     if [ "$SERVICE" = "listmonk" ]; then
       podman-compose -f "$COMPOSE_FILE" up -d listmonk-postgres
       "${ROOT_DIR}/scripts/setup-listmonk.sh"
       podman-compose -f "$COMPOSE_FILE" up -d listmonk
       "${ROOT_DIR}/scripts/setup-listmonk.sh"
-    elif [ "$SERVICE" = "collector" ]; then
+    elif [ "$SERVICE" = "collector" ] || [ "$SERVICE" = "langgraph" ]; then
       podman-compose -f "$COMPOSE_FILE" up -d --build
     else
       podman-compose -f "$COMPOSE_FILE" up -d
@@ -180,6 +198,16 @@ case "$ACTION" in
         echo "Restarting same-machine collector with Langfuse tracing enabled..."
         podman-compose -f "${COMPOSE_DIR}/collector.yml" -f "${COMPOSE_DIR}/collector.same-machine.yml" up -d --build
       fi
+    fi
+    if [ "$SERVICE" = "litellm" ]; then
+      "${ROOT_DIR}/scripts/setup-litellm.sh"
+      if podman container exists redu-os-collector 2>/dev/null; then
+        echo "Restarting same-machine collector with LiteLLM provider enabled..."
+        podman-compose -f "${COMPOSE_DIR}/collector.yml" -f "${COMPOSE_DIR}/collector.same-machine.yml" up -d --build
+      fi
+    fi
+    if [ "$SERVICE" = "langgraph" ]; then
+      "${ROOT_DIR}/scripts/setup-langgraph.sh"
     fi
     ;;
   down)
@@ -259,6 +287,20 @@ case "$ACTION" in
       source "${ROOT_DIR}/.env"
       set +a
     fi
+    if [ "$SERVICE" = "litellm" ]; then
+      "${ROOT_DIR}/scripts/litellm-env.sh"
+      set -a
+      # shellcheck disable=SC1091
+      source "${ROOT_DIR}/.env"
+      set +a
+    fi
+    if [ "$SERVICE" = "langgraph" ]; then
+      "${ROOT_DIR}/scripts/langgraph-env.sh"
+      set -a
+      # shellcheck disable=SC1091
+      source "${ROOT_DIR}/.env"
+      set +a
+    fi
 
     podman-compose -f "$COMPOSE_FILE" down
     if [ "$SERVICE" = "listmonk" ]; then
@@ -266,7 +308,7 @@ case "$ACTION" in
       "${ROOT_DIR}/scripts/setup-listmonk.sh"
       podman-compose -f "$COMPOSE_FILE" up -d listmonk
       "${ROOT_DIR}/scripts/setup-listmonk.sh"
-    elif [ "$SERVICE" = "collector" ]; then
+    elif [ "$SERVICE" = "collector" ] || [ "$SERVICE" = "langgraph" ]; then
       podman-compose -f "$COMPOSE_FILE" up -d --build
     else
       podman-compose -f "$COMPOSE_FILE" up -d
@@ -288,6 +330,16 @@ case "$ACTION" in
         podman-compose -f "${COMPOSE_DIR}/collector.yml" -f "${COMPOSE_DIR}/collector.same-machine.yml" up -d --build
       fi
     fi
+    if [ "$SERVICE" = "litellm" ]; then
+      "${ROOT_DIR}/scripts/setup-litellm.sh"
+      if podman container exists redu-os-collector 2>/dev/null; then
+        echo "Restarting same-machine collector with LiteLLM provider enabled..."
+        podman-compose -f "${COMPOSE_DIR}/collector.yml" -f "${COMPOSE_DIR}/collector.same-machine.yml" up -d --build
+      fi
+    fi
+    if [ "$SERVICE" = "langgraph" ]; then
+      "${ROOT_DIR}/scripts/setup-langgraph.sh"
+    fi
     ;;
   status)
     if [ "$SERVICE" = "zammad" ]; then
@@ -298,6 +350,12 @@ case "$ACTION" in
         --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
     elif [ "$SERVICE" = "langfuse" ]; then
       podman ps -a --filter "name=redu-os-langfuse" \
+        --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+    elif [ "$SERVICE" = "litellm" ]; then
+      podman ps -a --filter "name=redu-os-litellm" \
+        --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+    elif [ "$SERVICE" = "langgraph" ]; then
+      podman ps -a --filter "name=redu-os-langgraph" \
         --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
     else
       podman ps -a --filter "name=${CONTAINER_NAME}" \
@@ -375,6 +433,24 @@ case "$ACTION" in
           echo "${name} is not present"
         fi
       done
+    elif [ "$SERVICE" = "litellm" ]; then
+      for name in redu-os-litellm redu-os-litellm-postgres; do
+        echo
+        echo "==> ${name}"
+        if podman container exists "$name" 2>/dev/null; then
+          podman logs --tail "${TAIL:-150}" "$name"
+        else
+          echo "${name} is not present"
+        fi
+      done
+    elif [ "$SERVICE" = "langgraph" ]; then
+      echo
+      echo "==> redu-os-langgraph"
+      if podman container exists redu-os-langgraph 2>/dev/null; then
+        podman logs --tail "${TAIL:-150}" redu-os-langgraph
+      else
+        echo "redu-os-langgraph is not present"
+      fi
     else
       podman logs --tail "${TAIL:-150}" "$CONTAINER_NAME"
     fi
@@ -399,6 +475,11 @@ case "$ACTION" in
     elif [ "$SERVICE" = "langfuse" ]; then
       "${ROOT_DIR}/scripts/langfuse-env.sh"
       podman-compose -f "$COMPOSE_FILE" pull
+    elif [ "$SERVICE" = "litellm" ]; then
+      "${ROOT_DIR}/scripts/litellm-env.sh"
+      podman-compose -f "$COMPOSE_FILE" pull
+    elif [ "$SERVICE" = "langgraph" ]; then
+      podman build -f "${ROOT_DIR}/langgraph-app/Containerfile" -t localhost/redu-os-langgraph:latest "${ROOT_DIR}/langgraph-app"
     else
       podman-compose -f "$COMPOSE_FILE" pull
     fi

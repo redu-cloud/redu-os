@@ -5,6 +5,13 @@ services:
     environment:
       SUPABASE_URL: http://host.containers.internal:8000
       AI_ENABLED: "true"
+      AI_PROVIDER: ${AI_PROVIDER:-ollama}
+      AI_CHAT_BASE_URL: ${AI_CHAT_BASE_URL:-}
+      AI_CHAT_API_KEY: ${AI_CHAT_API_KEY:-}
+      AI_CHAT_MODEL: ${AI_CHAT_MODEL:-}
+      AI_EMBEDDING_BASE_URL: ${AI_EMBEDDING_BASE_URL:-}
+      AI_EMBEDDING_API_KEY: ${AI_EMBEDDING_API_KEY:-}
+      AI_EMBEDDING_MODEL: ${AI_EMBEDDING_MODEL:-}
       OLLAMA_URL: http://host.containers.internal:${OLLAMA_PORT:-11435}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-deepseek-r1:1.5b}
       OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}

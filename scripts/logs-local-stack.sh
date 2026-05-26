@@ -80,14 +80,22 @@ case "$TARGET" in
       print_logs "$name"
     done
     ;;
+  litellm)
+    for name in redu-os-litellm redu-os-litellm-postgres; do
+      print_logs "$name"
+    done
+    ;;
+  langgraph)
+    print_logs redu-os-langgraph
+    ;;
   all)
-    for name in redu-os-collector redu-os-qdrant redu-os-ollama supabase-kong supabase-studio supabase-db redu-os-activepieces redu-os-uptime-kuma redu-os-umami redu-os-glitchtip redu-os-listmonk zammad_zammad-nginx_1 zammad_zammad-railsserver_1 redu-os-langfuse-web redu-os-langfuse-worker; do
+    for name in redu-os-collector redu-os-qdrant redu-os-ollama supabase-kong supabase-studio supabase-db redu-os-activepieces redu-os-uptime-kuma redu-os-umami redu-os-glitchtip redu-os-listmonk zammad_zammad-nginx_1 zammad_zammad-railsserver_1 redu-os-langfuse-web redu-os-langfuse-worker redu-os-litellm redu-os-langgraph; do
       print_logs "$name"
     done
     ;;
   *)
     echo "Unknown log target: ${TARGET}" >&2
-    echo "Usage: npm run logs [all|collector|ollama|qdrant|supabase|activepieces|uptime|umami|glitchtip|listmonk|zammad|langfuse]" >&2
+    echo "Usage: npm run logs [all|collector|ollama|qdrant|supabase|activepieces|uptime|umami|glitchtip|listmonk|zammad|langfuse|litellm|langgraph]" >&2
     echo "Examples:" >&2
     echo "  npm run logs" >&2
     echo "  npm run logs:collector" >&2

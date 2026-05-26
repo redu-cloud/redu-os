@@ -38,6 +38,12 @@ wait_for() {
 if [ -f "${ROOT_DIR}/.local/langfuse-local.env" ]; then
   "${ROOT_DIR}/scripts/langfuse-env.sh"
 fi
+if [ -f "${ROOT_DIR}/.local/litellm-local.env" ]; then
+  "${ROOT_DIR}/scripts/litellm-env.sh"
+fi
+if [ -f "${ROOT_DIR}/.local/langgraph-local.env" ]; then
+  "${ROOT_DIR}/scripts/langgraph-env.sh"
+fi
 
 set -a
 # shellcheck disable=SC1090
@@ -171,5 +177,9 @@ echo "  Zammad: npm run modular:zammad:up"
 echo "  Zammad login: ${ZAMMAD_ADMIN_EMAIL:-admin@example.com} / ${ZAMMAD_ADMIN_PASSWORD:-ChangeMeStrong123}"
 echo "  Langfuse: npm run modular:langfuse:up"
 echo "  Langfuse login: ${LANGFUSE_ADMIN_EMAIL:-admin@example.com} / ${LANGFUSE_ADMIN_PASSWORD:-ChangeMeStrong123}"
+echo "  LiteLLM: npm run modular:litellm:up"
+echo "  LiteLLM UI/API key: ${LITELLM_URL:-http://127.0.0.1:${LITELLM_PORT:-4000}}/ui / ${LITELLM_MASTER_KEY:-not-generated-yet}"
+echo "  LangGraph: npm run modular:langgraph:up"
+echo "  LangGraph API/key: ${LANGGRAPH_URL:-http://127.0.0.1:${LANGGRAPH_PORT:-3010}} / ${LANGGRAPH_API_KEY:-not-generated-yet}"
 echo "  Local secrets: ${SUPABASE_ENV}"
 echo "  Project env: ${ROOT_DIR}/.env"

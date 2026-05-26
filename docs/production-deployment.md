@@ -66,7 +66,7 @@ VM 1: Reverse proxy + Collector + Dashboard
 VM 2: Supabase
 VM 3: Qdrant
 VM 4: Ollama + DeepSeek
-VM 5: Activepieces and optional apps
+VM 5: LiteLLM, LangGraph, Activepieces, and optional apps
 ```
 
 Useful sizing:
@@ -95,6 +95,8 @@ errors.example.com         -> GlitchTip
 audience.example.com       -> Listmonk
 support.example.com        -> Zammad
 langfuse.example.com       -> Langfuse
+ai.example.com             -> LiteLLM, admin-only or private
+agents.example.com         -> LangGraph, admin-only or private
 ```
 
 Keep private-only services off public DNS:
@@ -123,6 +125,8 @@ Expose these publicly only through a reverse proxy with HTTPS:
 9000    Listmonk
 8081    Zammad
 3007    Langfuse
+4000    LiteLLM, admin-only or private
+3010    LangGraph, admin-only or private
 ```
 
 Keep these private:
@@ -130,6 +134,8 @@ Keep these private:
 ```text
 6333    Qdrant
 11434   Ollama
+4000    LiteLLM if only used on the private network
+3010    LangGraph if only used on the private network
 5432    PostgreSQL
 6379    Redis
 3306    MariaDB
@@ -210,6 +216,9 @@ ZAMMAD_ADMIN_PASSWORD
 LANGFUSE_PUBLIC_KEY
 LANGFUSE_SECRET_KEY
 LANGFUSE_ADMIN_PASSWORD
+LITELLM_MASTER_KEY
+LITELLM_SALT_KEY
+LANGGRAPH_API_KEY
 ```
 
 Use shell-safe values in `.env`. Avoid unquoted spaces because the project scripts source `.env` files.
@@ -241,6 +250,7 @@ QDRANT_API_KEY=replace-with-qdrant-key
 QDRANT_COLLECTION=redu_os_events
 
 AI_ENABLED=true
+AI_PROVIDER=ollama
 OLLAMA_URL=http://10.10.0.40:11434
 OLLAMA_MODEL=deepseek-r1:1.5b
 OLLAMA_EMBED_MODEL=nomic-embed-text
@@ -250,6 +260,36 @@ AUTOMATION_WEBHOOK_API_KEY=replace-with-webhook-key
 ```
 
 The Supabase service role key belongs only on trusted servers. Do not put it in browser code, public dashboards, mobile apps, or client-side config.
+
+To route model calls through LiteLLM instead:
+
+```env
+AI_ENABLED=true
+AI_PROVIDER=litellm
+AI_CHAT_BASE_URL=http://10.10.0.50:4000/v1
+AI_CHAT_API_KEY=replace-with-litellm-master-key
+AI_CHAT_MODEL=local-deepseek
+AI_EMBEDDING_BASE_URL=http://10.10.0.50:4000/v1
+AI_EMBEDDING_API_KEY=replace-with-litellm-master-key
+AI_EMBEDDING_MODEL=local-embeddings
+```
+
+LiteLLM can still route to private Ollama first. Later, enable hosted model providers in the LiteLLM env without changing collector code.
+
+To run LangGraph on a workflow VM:
+
+```env
+LANGGRAPH_URL=https://agents.example.com
+LANGGRAPH_API_KEY=replace-with-lg-key
+LANGGRAPH_AI_PROVIDER=openai-compatible
+LANGGRAPH_AI_BASE_URL=http://10.10.0.50:4000/v1
+LANGGRAPH_AI_API_KEY=replace-with-litellm-master-key
+LANGGRAPH_AI_MODEL=local-deepseek
+LANGGRAPH_MEMORY_SEARCH_URL=https://collector.example.com/v1/memory/search
+LANGGRAPH_MEMORY_API_KEY=replace-with-collector-key
+LANGGRAPH_COLLECTOR_URL=https://collector.example.com
+LANGGRAPH_COLLECTOR_API_KEY=replace-with-collector-key
+```
 
 ## Backups
 
@@ -263,6 +303,8 @@ Qdrant:       Qdrant snapshots or volume snapshots
 Ollama:       Model volume, or document exact model names and re-pull
 Activepieces: Postgres, Redis if needed, `.env`
 Langfuse:     Postgres, ClickHouse, Redis, MinIO, `.env`
+LiteLLM:      Postgres, generated config, `.env`
+LangGraph:    `.env`, image tag or git commit
 Uptime Kuma:  MariaDB volume
 Umami:        Postgres volume
 GlitchTip:    Postgres, Redis, uploads

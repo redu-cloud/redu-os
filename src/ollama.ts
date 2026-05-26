@@ -11,6 +11,55 @@ export type AiInsight = {
   raw?: unknown;
 };
 
+type AiCallContext = {
+  provider: string;
+  chatBaseUrl: string;
+  chatModel: string;
+  embeddingBaseUrl: string;
+  embeddingModel: string;
+};
+
+function normalizeOpenAiBaseUrl(url: string) {
+  return url.replace(/\/$/, "").replace(/\/v1$/, "");
+}
+
+function aiContext(): AiCallContext {
+  if (!config.AI_ENABLED || config.AI_PROVIDER === "fallback") {
+    return {
+      provider: "fallback",
+      chatBaseUrl: "",
+      chatModel: "fallback",
+      embeddingBaseUrl: "",
+      embeddingModel: "fallback"
+    };
+  }
+
+  if (config.AI_PROVIDER === "litellm" || config.AI_PROVIDER === "openai-compatible") {
+    const baseUrl = config.AI_CHAT_BASE_URL || config.OLLAMA_URL;
+    const embeddingBaseUrl = config.AI_EMBEDDING_BASE_URL || baseUrl;
+
+    return {
+      provider: config.AI_PROVIDER,
+      chatBaseUrl: normalizeOpenAiBaseUrl(baseUrl),
+      chatModel: config.AI_CHAT_MODEL || config.OLLAMA_MODEL,
+      embeddingBaseUrl: normalizeOpenAiBaseUrl(embeddingBaseUrl),
+      embeddingModel: config.AI_EMBEDDING_MODEL || config.OLLAMA_EMBED_MODEL
+    };
+  }
+
+  return {
+    provider: "ollama",
+    chatBaseUrl: config.OLLAMA_URL.replace(/\/$/, ""),
+    chatModel: config.OLLAMA_MODEL,
+    embeddingBaseUrl: config.OLLAMA_URL.replace(/\/$/, ""),
+    embeddingModel: config.OLLAMA_EMBED_MODEL
+  };
+}
+
+export function currentAiModel() {
+  return aiContext().chatModel;
+}
+
 function fallbackInsight(event: StoredEvent): AiInsight {
   return {
     category: event.type.includes("error")
@@ -60,8 +109,9 @@ function cleanCategory(value: unknown, fallback: string): string {
 
 export async function analyzeEvent(event: StoredEvent): Promise<AiInsight> {
   const startedAt = new Date();
+  const context = aiContext();
 
-  if (!config.AI_ENABLED) {
+  if (!config.AI_ENABLED || context.provider === "fallback") {
     const insight = fallbackInsight(event);
     await traceAiGeneration({
       event,
@@ -69,7 +119,10 @@ export async function analyzeEvent(event: StoredEvent): Promise<AiInsight> {
       insight,
       rawResponse: insight,
       startedAt,
-      endedAt: new Date()
+      endedAt: new Date(),
+      provider: context.provider,
+      model: context.chatModel,
+      baseUrl: context.chatBaseUrl
     });
     return insight;
   }
@@ -89,24 +142,61 @@ ${JSON.stringify(event, null, 2)}
 `;
 
   try {
-    const response = await fetch(`${config.OLLAMA_URL}/api/generate`, {
-      method: "POST",
-      headers: {
+    let data: unknown;
+    let text = "";
+
+    if (context.provider === "ollama") {
+      const response = await fetch(`${context.chatBaseUrl}/api/generate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: context.chatModel,
+          prompt,
+          stream: false
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Ollama returned ${response.status}`);
+      }
+
+      data = await response.json() as { response?: string };
+      text = typeof (data as { response?: unknown }).response === "string"
+        ? (data as { response: string }).response
+        : "";
+    } else {
+      const headers: Record<string, string> = {
         "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: config.OLLAMA_MODEL,
-        prompt,
-        stream: false
-      })
-    });
+      };
+      if (config.AI_CHAT_API_KEY) {
+        headers.Authorization = `Bearer ${config.AI_CHAT_API_KEY}`;
+      }
 
-    if (!response.ok) {
-      throw new Error(`Ollama returned ${response.status}`);
+      const response = await fetch(`${context.chatBaseUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model: context.chatModel,
+          messages: [
+            { role: "system", content: "You are an AI operations analyst for a startup. Return compact JSON only." },
+            { role: "user", content: prompt }
+          ],
+          temperature: 0.2
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`${context.provider} chat returned ${response.status}`);
+      }
+
+      data = await response.json() as {
+        choices?: Array<{ message?: { content?: string }, text?: string }>;
+      };
+      const choice = (data as { choices?: Array<{ message?: { content?: string }, text?: string }> }).choices?.[0];
+      text = choice?.message?.content ?? choice?.text ?? "";
     }
-
-    const data = await response.json() as { response?: string };
-    const text = data.response ?? "";
 
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) {
@@ -118,7 +208,10 @@ ${JSON.stringify(event, null, 2)}
         rawResponse: data,
         startedAt,
         endedAt: new Date(),
-        error: "Ollama response did not contain JSON"
+        error: `${context.provider} response did not contain JSON`,
+        provider: context.provider,
+        model: context.chatModel,
+        baseUrl: context.chatBaseUrl
       });
       return insight;
     }
@@ -140,7 +233,10 @@ ${JSON.stringify(event, null, 2)}
       insight,
       rawResponse: data,
       startedAt,
-      endedAt: new Date()
+      endedAt: new Date(),
+      provider: context.provider,
+      model: context.chatModel,
+      baseUrl: context.chatBaseUrl
     });
     return insight;
   } catch (error) {
@@ -158,7 +254,10 @@ ${JSON.stringify(event, null, 2)}
       rawResponse: insight.raw,
       startedAt,
       endedAt: new Date(),
-      error: message
+      error: message,
+      provider: context.provider,
+      model: context.chatModel,
+      baseUrl: context.chatBaseUrl
     });
     return insight;
   }
@@ -166,25 +265,57 @@ ${JSON.stringify(event, null, 2)}
 
 export async function embedText(text: string): Promise<number[] | null> {
   if (!config.QDRANT_ENABLED) return null;
+  const context = aiContext();
 
   try {
-    const response = await fetch(`${config.OLLAMA_URL}/api/embeddings`, {
+    let data: unknown;
+
+    if (context.provider === "ollama") {
+      const response = await fetch(`${context.embeddingBaseUrl}/api/embeddings`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: context.embeddingModel,
+          prompt: text
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Ollama embeddings returned ${response.status}`);
+      }
+
+      data = await response.json() as { embedding?: number[] };
+      return (data as { embedding?: number[] }).embedding ?? null;
+    }
+
+    if (context.provider !== "litellm" && context.provider !== "openai-compatible") {
+      throw new Error("No embedding provider configured");
+    }
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json"
+    };
+    if (config.AI_EMBEDDING_API_KEY || config.AI_CHAT_API_KEY) {
+      headers.Authorization = `Bearer ${config.AI_EMBEDDING_API_KEY || config.AI_CHAT_API_KEY}`;
+    }
+
+    const response = await fetch(`${context.embeddingBaseUrl}/v1/embeddings`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers,
       body: JSON.stringify({
-        model: config.OLLAMA_EMBED_MODEL,
-        prompt: text
+        model: context.embeddingModel,
+        input: text
       })
     });
 
     if (!response.ok) {
-      throw new Error(`Ollama embeddings returned ${response.status}`);
+      throw new Error(`${context.provider} embeddings returned ${response.status}`);
     }
 
-    const data = await response.json() as { embedding?: number[] };
-    return data.embedding ?? null;
+    data = await response.json() as { data?: Array<{ embedding?: number[] }> };
+    return (data as { data?: Array<{ embedding?: number[] }> }).data?.[0]?.embedding ?? null;
   } catch {
     if (!config.QDRANT_FALLBACK_EMBEDDINGS) {
       return null;

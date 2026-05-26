@@ -63,7 +63,7 @@ npm install
 npm run dev
 ```
 
-Qdrant and Ollama are optional. If `QDRANT_ENABLED=false` and `AI_ENABLED=false`, the collector still stores events and creates fallback insights.
+Qdrant and local AI are optional. If `QDRANT_ENABLED=false` and `AI_ENABLED=false`, the collector still stores events and creates fallback insights. For AI, use `AI_PROVIDER=ollama` for local DeepSeek, `AI_PROVIDER=litellm` for a gateway that can route to local or hosted models, `AI_PROVIDER=openai-compatible` for an existing gateway, or `AI_PROVIDER=fallback` for no model calls.
 
 ## Local Supabase + Qdrant + Ollama + Collector
 
@@ -181,6 +181,8 @@ npm run modular:glitchtip:up
 npm run modular:listmonk:up
 npm run modular:zammad:up
 npm run modular:langfuse:up
+npm run modular:litellm:up
+npm run modular:langgraph:up
 ```
 
 Use `modular:local:up` to run the exact same stack on one machine, but with Supabase, Qdrant, Ollama, and Collector started as separate modules. Individual services also have `:status`, `:logs`, and `:down` variants. See [Modular VM Walkthrough](./docs/modular-vm-walkthrough.md).
@@ -191,6 +193,7 @@ Use `modular:local:up` to run the exact same stack on one machine, but with Supa
 - [Deployment Modes](./docs/deployment-modes.md): smallest complete tier, modular split-VM tier, service contracts, network matrix, and rollout guidance.
 - [Modular VM Walkthrough](./docs/modular-vm-walkthrough.md): compose files and commands for running collector, Qdrant, and Ollama on separate VMs.
 - [Production Deployment](./docs/production-deployment.md): DNS, reverse proxy, firewall, secrets, backups, restores, upgrades, monitoring, and smoke tests.
+- [v1 Readiness And Roadmap](./docs/roadmap.md): what is ready for the first published baseline and what comes next.
 - [Integration Webhooks](./docs/integration-webhooks.md): connect GlitchTip, Zammad, Uptime Kuma, Umami, Listmonk, custom apps, and Activepieces.
 - [Activepieces Automation](./docs/activepieces.md): run real Activepieces with PostgreSQL/Redis, create use-case workflows, and connect them to collector webhooks.
 - [Uptime Kuma Monitoring](./docs/uptime-kuma.md): run the optional monitoring module and watch the local/modular stack.
@@ -199,6 +202,9 @@ Use `modular:local:up` to run the exact same stack on one machine, but with Supa
 - [Listmonk Audience](./docs/listmonk.md): run the optional audience module and create the demo waitlist.
 - [Zammad Support](./docs/zammad.md): run the optional helpdesk module and create the local support admin.
 - [Langfuse AI Observability](./docs/langfuse.md): run local Langfuse and trace collector prompts, model output, latency, and fallback behavior.
+- [LiteLLM AI Gateway](./docs/litellm.md): route collector AI calls to local Ollama or hosted model providers through one OpenAI-compatible gateway.
+- [LangGraph Agents](./docs/langgraph.md): run multi-step agent workflows for support, incidents, onboarding, and product signals.
+- [AI Provider Modes](./docs/ai-provider-modes.md): choose local Ollama, LiteLLM, direct OpenAI-compatible, or fallback mode.
 - [Security](./SECURITY.md): local demo credentials, webhook handling, and production cautions.
 
 ## Build

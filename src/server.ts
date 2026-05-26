@@ -12,7 +12,7 @@ import {
   normalizeZammad
 } from "./normalizers.js";
 import { getSimilarContext, storeAction, storeEvent, storeFeedback, storeInsight } from "./supabase.js";
-import { analyzeEvent } from "./ollama.js";
+import { analyzeEvent, currentAiModel } from "./ollama.js";
 import { rememberEvent, searchMemory } from "./qdrant.js";
 import { triggerAutomation } from "./automation.js";
 import type { NormalizedEvent } from "./types.js";
@@ -71,7 +71,7 @@ async function handleEvent(event: NormalizedEvent) {
       sentiment: insight.sentiment,
       summary: insight.summary,
       recommended_action: insight.recommended_action,
-      ai_model: config.AI_ENABLED ? config.OLLAMA_MODEL : "fallback",
+      ai_model: config.AI_ENABLED ? currentAiModel() : "fallback",
       raw: insight.raw
     });
   } catch (error) {
