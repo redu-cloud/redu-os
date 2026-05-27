@@ -17,18 +17,21 @@
 - [x] Feedback loop — outcomes stored and fed back as context for future analysis
 - [x] LangGraph agent — Python/FastAPI, invocable from dashboard
 - [x] Langfuse LLM tracing — optional module
+- [x] **Runtime config overrides** — provider, model, base URL, API key changeable at runtime without restart; persisted to `.local/runtime-config.json` via volume mount
 
 ### Dashboard
-- [x] 11-page SPA: Overview, Events, Insights, Actions, Memory, Agents, Integrations, AI Config, Feedback, Settings, Logs
+- [x] **Codebase refactored** — 2708-line `src/dashboard.ts` monolith split into 32-file folder: `src/dashboard/` with `index.ts`, `config.ts`, `auth.ts`, `umami.ts`, `langfuse.ts`, `podman.ts`, `routes/` (10 files), `html/login.ts`, `html/shared.ts`, `html/spa/` (styles, utils, nav, bind, 12 page files)
+- [x] **12-page SPA**: Overview, Events, Insights, Actions, Memory, Agents, Integrations, AI Config, Notifications, Feedback, Settings, Logs
 - [x] Auth — session cookie, Supabase user validation, sign-out
 - [x] Overview — live metrics, activity timeline, service health, quick-action demo buttons
 - [x] Events — unified log, source/severity filters, expandable detail with full AI loop (event → insights → actions → feedback)
-- [x] Insights — AI insight log with priority filter
+- [x] Insights — AI insight log with priority filter (case-insensitive `.ilike()` match)
 - [x] Actions — approve / reject / mark complete controls, writes directly to Supabase
 - [x] Memory — Qdrant semantic search UI
 - [x] Agents — LangGraph invocation with mode selector and response display
 - [x] Integrations — webhook endpoint docs, collector config, service status
-- [x] AI Config — provider/model config display, Ollama model list
+- [x] **AI Config** — provider toggle (LiteLLM ↔ Ollama), model dropdowns (chat/embed separated), API key field; changes apply at runtime and are reflected immediately
+- [x] **Notifications** — Discord, Slack, Telegram configuration; Edit/Save/Cancel/Test per channel; fires on every processed event; config persists across container restarts via `.local/runtime-config.json`
 - [x] Feedback — feedback log + manual submission form
 - [x] Settings — instance config, feature flags, URL map
 - [x] **Logs** — container log viewer, reads all Podman containers grouped by service family, per-container tail/filter
@@ -38,19 +41,23 @@
 - [x] `modular-service.sh` supports `dashboard` — `up`, `down`, `restart`, `status`, `logs`, `pull`
 - [x] `start-full-stack.sh` uses `podman-compose` for dashboard (no more PID file)
 - [x] Podman socket mounted into dashboard container — Logs page works via REST API (`/run/podman/podman.sock`)
-- [x] `toContainerUrl()` — dashboard transparently rewrites `127.0.0.1` → `host.containers.internal` for all service URLs
+- [x] `toContainerUrl()` — dashboard transparently rewrites `127.0.0.1` → `host.containers.internal` for all service URLs; collector does the same at startup via `containerizeUrl()`
 - [x] `npm run modular:dashboard:*` scripts — `up`, `down`, `logs`, `status`
+- [x] **Persistent runtime config** — `compose/collector.yml` mounts `.local/` as a volume; `runtime-config.json` survives container restarts and rebuilds
 
 ### Project
 - [x] License — Apache 2.0 (`LICENSE` file)
 - [x] `package.json` — SPDX `"license": "Apache-2.0"`, updated description
+- [x] **Playwright visual verification** — all 11 Dashboard pages + Activepieces flows confirmed healthy; `chrome-for-testing` browser installed; favicon 404 and `[object Object]` action display bugs fixed
+- [x] **Umami + Langfuse self-tracking snippets** — dashboard auto-provisions Umami website on startup (`UMAMI_WEBSITE_ID` persisted to `.env`), injects tracking script in both HTML pages, tracks SPA page navigations via `window.umami.track()`; LangGraph agent calls from the Agents page are traced to Langfuse as `reduos.dashboard.agent` (fire-and-forget, `langfuse_module: redu-os-dashboard`)
+- [x] **External AI provider keys** — `OPENAI_ENABLED=true` + `gpt-4o-mini` routed through LiteLLM as `openai-default`; fixed compose bug where `environment:` block was blanking `env_file` API keys; full pipeline confirmed: event → GPT-4o-mini insight → automation → feedback
 
 ---
 
 ## 🚧 In progress / next up
 
-- [ ] **Playwright visual verification** — verify Dashboard and Activepieces UI after session restart (MCP needs `--browser chromium`)
-- [ ] **External AI provider keys** — add OpenAI / Anthropic / Groq keys to `.env` to enable cloud model routing through LiteLLM
+- [ ] **LiteLLM health probe** — replace `/health/liveliness` ping with a 1-token completion so a bad API key shows "Error" on the Overview service grid
+- [ ] **Slack + Telegram notification test** — Discord confirmed working; Slack and Telegram channels need end-to-end test
 
 ---
 
@@ -73,8 +80,8 @@ For production deployments on 2–5 hosts (e.g. redu.cloud), the current Podman 
 - Not needed: Loki/Grafana unless >10 hosts or log retention/search becomes a requirement
 
 ### Dashboard improvements
-- [ ] Real-time event stream (SSE) — live-push new events to Overview and Events pages without manual refresh
-- [ ] Dark/light theme toggle
+- [x] **Real-time SSE** — `GET /api/events/stream`; shared server-side Supabase poller (4 s) fans out to all connected clients; Overview timeline prepends new rows with indigo flash animation + bumps event counter; Events page shows "N new events — Reload" banner; `LIVE` pulsing green dot in topnav when connected; auto-reconnects on drop
+- [x] **Dark/light theme toggle** — moon/sun button in topnav; `[data-theme="dark"]` CSS vars on `<html>`; persisted to `localStorage`; works on both dashboard and login page; full dark overrides for cards, tables, inputs, badges, filters
 - [ ] Mobile-responsive sidebar (drawer)
 - [ ] Event detail — link to source tool (GlitchTip issue, Zammad ticket, etc.)
 - [ ] Bulk action controls on Events page (mark all as reviewed, trigger AI on selected)
@@ -93,7 +100,6 @@ For production deployments on 2–5 hosts (e.g. redu.cloud), the current Podman 
 
 ### Integrations
 - [ ] GitHub — PR opened, CI failed, release published
-- [ ] Slack / Discord — inbound events + outbound notifications as automation targets
 - [ ] Stripe — payment failed, churn, MRR milestone
 - [ ] Linear / Jira — issue lifecycle events
 - [ ] Resend / Postmark — email delivery/bounce events
@@ -101,7 +107,6 @@ For production deployments on 2–5 hosts (e.g. redu.cloud), the current Podman 
 ### Ops
 - [ ] `npm run doctor` improvements — check Podman socket, model availability, Supabase schema version
 - [ ] One-command cloud deploy script (target: single Ubuntu VPS, installs Podman + starts full stack)
-- [ ] Health endpoint (`/health`) on collector and dashboard — machine-readable, for uptime monitoring
 - [ ] Automated Supabase schema migrations — version-tracked, applied on startup
 
 ---

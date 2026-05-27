@@ -2,6 +2,27 @@ import { config } from "./config.js";
 import { traceAiGeneration } from "./langfuse.js";
 import type { StoredEvent } from "./types.js";
 
+// Runtime config overrides — survive for the lifetime of the process.
+// Any field set here wins over the frozen `config` object parsed at startup.
+interface RuntimeOverrides {
+  ai_provider?: string | null;
+  ai_chat_model?: string | null;
+  ai_chat_base_url?: string | null;
+  ai_chat_api_key?: string | null;
+  ollama_model?: string | null;
+  ollama_embed_model?: string | null;
+}
+let _overrides: RuntimeOverrides = {};
+
+export function applyConfigOverrides(patch: RuntimeOverrides): void {
+  _overrides = { ..._overrides, ...patch };
+}
+export function getConfigOverrides(): RuntimeOverrides { return { ..._overrides }; }
+// Back-compat for the provider switch (used by server.ts)
+export function setProviderOverride(p: string | null): void { _overrides.ai_provider = p; }
+export function getProviderOverride(): string | null { return _overrides.ai_provider ?? null; }
+export function getActiveProvider(): string { return _overrides.ai_provider ?? config.AI_PROVIDER; }
+
 export type AiInsight = {
   category: string;
   priority: "Low" | "Medium" | "High";
@@ -24,7 +45,9 @@ function normalizeOpenAiBaseUrl(url: string) {
 }
 
 function aiContext(): AiCallContext {
-  if (!config.AI_ENABLED || config.AI_PROVIDER === "fallback") {
+  const provider = getActiveProvider();
+
+  if (!config.AI_ENABLED || provider === "fallback") {
     return {
       provider: "fallback",
       chatBaseUrl: "",
@@ -34,14 +57,14 @@ function aiContext(): AiCallContext {
     };
   }
 
-  if (config.AI_PROVIDER === "litellm" || config.AI_PROVIDER === "openai-compatible") {
-    const baseUrl = config.AI_CHAT_BASE_URL || config.OLLAMA_URL;
+  if (provider === "litellm" || provider === "openai-compatible") {
+    const baseUrl = _overrides.ai_chat_base_url ?? (config.AI_CHAT_BASE_URL || config.OLLAMA_URL);
     const embeddingBaseUrl = config.AI_EMBEDDING_BASE_URL || baseUrl;
 
     return {
-      provider: config.AI_PROVIDER,
+      provider,
       chatBaseUrl: normalizeOpenAiBaseUrl(baseUrl),
-      chatModel: config.AI_CHAT_MODEL || config.OLLAMA_MODEL,
+      chatModel: _overrides.ai_chat_model ?? (config.AI_CHAT_MODEL || config.OLLAMA_MODEL),
       embeddingBaseUrl: normalizeOpenAiBaseUrl(embeddingBaseUrl),
       embeddingModel: config.AI_EMBEDDING_MODEL || config.OLLAMA_EMBED_MODEL
     };
@@ -50,9 +73,9 @@ function aiContext(): AiCallContext {
   return {
     provider: "ollama",
     chatBaseUrl: config.OLLAMA_URL.replace(/\/$/, ""),
-    chatModel: config.OLLAMA_MODEL,
+    chatModel: _overrides.ollama_model ?? config.OLLAMA_MODEL,
     embeddingBaseUrl: config.OLLAMA_URL.replace(/\/$/, ""),
-    embeddingModel: config.OLLAMA_EMBED_MODEL
+    embeddingModel: _overrides.ollama_embed_model ?? config.OLLAMA_EMBED_MODEL
   };
 }
 

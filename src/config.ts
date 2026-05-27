@@ -1,5 +1,17 @@
 import "dotenv/config";
+import { existsSync } from "node:fs";
 import { z } from "zod";
+
+// When running inside a container (Podman/Docker), service URLs using 127.0.0.1
+// point to the container's own loopback — unreachable. Rewrite to host.containers.internal.
+const IN_CONTAINER = existsSync("/run/.containerenv") || existsSync("/.dockerenv");
+function containerizeUrl(key: string): void {
+  if (IN_CONTAINER && process.env[key]) {
+    process.env[key] = process.env[key]!.replace(/127\.0\.0\.1/g, "host.containers.internal");
+  }
+}
+// Rewrite before Zod freezes the config
+["QDRANT_URL", "OLLAMA_URL", "SUPABASE_URL", "AI_CHAT_BASE_URL", "AI_EMBEDDING_BASE_URL"].forEach(containerizeUrl);
 
 const envBoolean = (defaultValue: boolean) =>
   z.preprocess((value) => {
@@ -48,6 +60,12 @@ const envSchema = z.object({
   AUTOMATION_WEBHOOK_URL: z.string().url().optional().or(z.literal("")).default(""),
   AUTOMATION_WEBHOOK_URLS: z.string().optional().default(""),
   AUTOMATION_WEBHOOK_API_KEY: z.string().optional().default(""),
+
+  // ── Notifications ──────────────────────────────────────────────────────────
+  DISCORD_WEBHOOK_URL: z.string().url().optional().or(z.literal("")).default(""),
+  SLACK_WEBHOOK_URL:   z.string().url().optional().or(z.literal("")).default(""),
+  TELEGRAM_BOT_TOKEN:  z.string().optional().default(""),
+  TELEGRAM_CHAT_ID:    z.string().optional().default(""),
 
   MAX_EVENT_MESSAGE_LENGTH: z.coerce.number().default(8000)
 });

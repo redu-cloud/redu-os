@@ -10,5 +10,8 @@ services:
     restart: unless-stopped
     env_file:
       - ../.env
+    volumes:
+      # Mount .local/ so runtime-config.json persists across container restarts
+      - ../.local:/app/.local
     ports:
       - "${COLLECTOR_PORT:-3005}:3005"

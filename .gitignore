@@ -1,6 +1,11 @@
 node_modules/
 .env
 .local/
+.playwright-mcp/
+.claude/
+*.png
+*.jpg
+*.jpeg
 .npm/
 *.log
 *.pid

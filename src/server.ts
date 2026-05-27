@@ -12,9 +12,10 @@ import {
   normalizeZammad
 } from "./normalizers.js";
 import { getSimilarContext, storeAction, storeEvent, storeFeedback, storeInsight } from "./supabase.js";
-import { analyzeEvent, currentAiModel } from "./ollama.js";
+import { analyzeEvent, currentAiModel, setProviderOverride, getProviderOverride, applyConfigOverrides, getConfigOverrides } from "./ollama.js";
 import { rememberEvent, searchMemory } from "./qdrant.js";
 import { triggerAutomation } from "./automation.js";
+import { sendNotifications, applyNotificationOverrides, getNotificationOverrides } from "./notifications.js";
 import type { NormalizedEvent } from "./types.js";
 import { actionSchema, feedbackSchema, memorySearchSchema, similarContextQuerySchema } from "./validation.js";
 import type { AiInsight } from "./ollama.js";
@@ -58,6 +59,86 @@ app.get("/health", async () => {
   };
 });
 
+// ── Runtime config (API-key protected) ──────────────────────────────────────
+const VALID_PROVIDERS = ["ollama", "litellm", "openai-compatible", "fallback"] as const;
+
+app.get("/internal/config", async (request) => {
+  requireApiKey(request);
+  const ov = getConfigOverrides();
+  const nOv = getNotificationOverrides();
+  return {
+    ok: true,
+    ai_provider: ov.ai_provider ?? config.AI_PROVIDER,
+    overrides: ov,
+    notifications: {
+      discord:  { configured: !!(nOv.discord_webhook_url  ?? config.DISCORD_WEBHOOK_URL) },
+      slack:    { configured: !!(nOv.slack_webhook_url    ?? config.SLACK_WEBHOOK_URL) },
+      telegram: {
+        configured: !!((nOv.telegram_bot_token ?? config.TELEGRAM_BOT_TOKEN) &&
+                       (nOv.telegram_chat_id   ?? config.TELEGRAM_CHAT_ID)),
+        chat_id: (nOv.telegram_chat_id ?? config.TELEGRAM_CHAT_ID) || null
+      }
+    }
+  };
+});
+
+app.post("/internal/config", async (request) => {
+  requireApiKey(request);
+  const body = request.body as {
+    ai_provider?: string;
+    ai_chat_model?: string;
+    ai_chat_base_url?: string;
+    ai_chat_api_key?: string;
+    ollama_model?: string;
+    ollama_embed_model?: string;
+    // Notifications
+    discord_webhook_url?: string;
+    slack_webhook_url?: string;
+    telegram_bot_token?: string;
+    telegram_chat_id?: string;
+  };
+
+  // Validate provider if provided
+  if (body.ai_provider !== undefined) {
+    if (!VALID_PROVIDERS.includes(body.ai_provider as typeof VALID_PROVIDERS[number])) {
+      throw new Error(`Invalid ai_provider. Valid values: ${VALID_PROVIDERS.join(", ")}`);
+    }
+    // null override = use env default
+    setProviderOverride(body.ai_provider === config.AI_PROVIDER ? null : body.ai_provider);
+  }
+
+  // Apply all other field overrides (empty string = clear override)
+  applyConfigOverrides({
+    ai_chat_model:    body.ai_chat_model    !== undefined ? (body.ai_chat_model    || null) : undefined,
+    ai_chat_base_url: body.ai_chat_base_url !== undefined ? (body.ai_chat_base_url || null) : undefined,
+    ai_chat_api_key:  body.ai_chat_api_key  !== undefined ? (body.ai_chat_api_key  || null) : undefined,
+    ollama_model:     body.ollama_model     !== undefined ? (body.ollama_model     || null) : undefined,
+    ollama_embed_model: body.ollama_embed_model !== undefined ? (body.ollama_embed_model || null) : undefined,
+  });
+
+  // Apply notification overrides
+  applyNotificationOverrides({
+    discord_webhook_url: body.discord_webhook_url !== undefined ? (body.discord_webhook_url || null) : undefined,
+    slack_webhook_url:   body.slack_webhook_url   !== undefined ? (body.slack_webhook_url   || null) : undefined,
+    telegram_bot_token:  body.telegram_bot_token  !== undefined ? (body.telegram_bot_token  || null) : undefined,
+    telegram_chat_id:    body.telegram_chat_id    !== undefined ? (body.telegram_chat_id    || null) : undefined,
+  });
+
+  const ov = getConfigOverrides();
+  return { ok: true, ai_provider: ov.ai_provider ?? config.AI_PROVIDER, overrides: ov, notifications: getNotificationOverrides() };
+});
+
+app.post("/internal/notifications/test", async (request) => {
+  requireApiKey(request);
+  const { channel } = request.body as { channel?: string };
+  if (!channel || !["discord", "slack", "telegram"].includes(channel)) {
+    throw new Error("channel must be one of: discord, slack, telegram");
+  }
+  const { testNotification } = await import("./notifications.js");
+  const result = await testNotification(channel as "discord" | "slack" | "telegram");
+  return { ok: result.ok, status: result.status };
+});
+
 async function handleEvent(event: NormalizedEvent) {
   const stored = await storeEvent(event);
   const insight = await analyzeEvent(stored);
@@ -80,6 +161,7 @@ async function handleEvent(event: NormalizedEvent) {
 
   const memory = await rememberEvent(stored);
   const automation = await triggerAutomation(stored, insight);
+  const notifications = await sendNotifications(stored, insight);
   let storedAction = null;
 
   if (config.AUTOMATION_WEBHOOK_URL || config.AUTOMATION_WEBHOOK_URLS) {
@@ -110,6 +192,7 @@ async function handleEvent(event: NormalizedEvent) {
     action_id: storedAction?.id ?? null,
     memory,
     automation,
+    notifications,
     insight: publicInsight(insight)
   };
 }

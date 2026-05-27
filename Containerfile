@@ -16,5 +16,7 @@ ENV NODE_ENV=production
 COPY package.json ./
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+# Runtime config directory — mounted as a volume so config persists across restarts
+RUN mkdir -p /app/.local
 EXPOSE 3005
 CMD ["node", "dist/server.js"]

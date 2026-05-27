@@ -116,6 +116,7 @@
     "@fastify/cors": "^10.0.1",
     "@fastify/helmet": "^12.0.1",
     "@qdrant/js-client-rest": "^1.13.0",
+    "@sentry/node": "^7.120.4",
     "@supabase/supabase-js": "^2.47.10",
     "@types/ws": "^8.18.1",
     "dotenv": "^16.4.7",
