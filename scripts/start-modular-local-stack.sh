@@ -33,17 +33,34 @@ wait_for() {
   done
 }
 
+wait_for_optional() {
+  local label="$1"
+  local attempts="$2"
+  local sleep_seconds="$3"
+  shift 3
+
+  echo "Waiting for ${label}..."
+  for i in $(seq 1 "$attempts"); do
+    if "$@" >/dev/null 2>&1; then
+      echo "${label} is responding."
+      return 0
+    fi
+
+    sleep "$sleep_seconds"
+  done
+
+  echo "${label} is not responding yet; continuing. Check logs/status after startup."
+  return 0
+}
+
 "${ROOT_DIR}/scripts/supabase-local-bootstrap.sh"
 "${ROOT_DIR}/scripts/activepieces-env.sh"
 if [ -f "${ROOT_DIR}/.local/langfuse-local.env" ]; then
   "${ROOT_DIR}/scripts/langfuse-env.sh"
 fi
-if [ -f "${ROOT_DIR}/.local/litellm-local.env" ]; then
-  "${ROOT_DIR}/scripts/litellm-env.sh"
-fi
-if [ -f "${ROOT_DIR}/.local/langgraph-local.env" ]; then
-  "${ROOT_DIR}/scripts/langgraph-env.sh"
-fi
+# Always generate LiteLLM env before LangGraph — LangGraph reads LiteLLM keys to wire its AI provider.
+"${ROOT_DIR}/scripts/litellm-env.sh"
+"${ROOT_DIR}/scripts/langgraph-env.sh"
 
 set -a
 # shellcheck disable=SC1090
@@ -151,10 +168,46 @@ set -a
 source "${ROOT_DIR}/.env"
 set +a
 
+echo "Starting LiteLLM AI gateway..."
+cd "$COMPOSE_DIR"
+podman-compose -f litellm.yml up -d
+
+wait_for_optional "LiteLLM" 24 5 \
+  curl -fsS "http://127.0.0.1:${LITELLM_PORT:-4000}/v1/models" \
+  -H "Authorization: Bearer ${LITELLM_MASTER_KEY:-}"
+
+echo "Starting LangGraph agent service..."
+cd "$COMPOSE_DIR"
+podman-compose -f langgraph.yml up -d --build
+
+wait_for_optional "LangGraph" 24 5 \
+  curl -fsS "http://127.0.0.1:${LANGGRAPH_PORT:-3010}/health"
+
+echo "Starting dashboard..."
+cd "$ROOT_DIR"
+if [ -f "${ROOT_DIR}/.local/dashboard.pid" ]; then
+  old_pid="$(cat "${ROOT_DIR}/.local/dashboard.pid" 2>/dev/null || true)"
+  if [ -n "$old_pid" ]; then
+    kill "$old_pid" 2>/dev/null || true
+  fi
+fi
+rm -f "${ROOT_DIR}/.local/dashboard.pid"
+if [ -x "${ROOT_DIR}/node_modules/.bin/tsx" ]; then
+  setsid -f "${ROOT_DIR}/node_modules/.bin/tsx" "${ROOT_DIR}/src/dashboard.ts" \
+    >> "${ROOT_DIR}/.local/dashboard.log" 2>&1
+  sleep 1
+  pgrep -n -f "${ROOT_DIR}/node_modules/.bin/tsx ${ROOT_DIR}/src/dashboard.ts" > "${ROOT_DIR}/.local/dashboard.pid" 2>/dev/null || true
+
+  wait_for_optional "Dashboard" 15 2 \
+    curl -fsS "http://127.0.0.1:${DASHBOARD_PORT:-3006}/login"
+else
+  echo "Dashboard was not started because node_modules/.bin/tsx is missing. Run npm install, then npm run dashboard."
+fi
+
 echo
 echo "Same-machine modular reduOS stack is ready:"
 echo "  Collector: http://127.0.0.1:${COLLECTOR_PORT:-3005}"
-echo "  Dashboard: http://127.0.0.1:${DASHBOARD_PORT:-3006} (run npm run dashboard)"
+echo "  Dashboard: http://127.0.0.1:${DASHBOARD_PORT:-3006}"
 echo "  Dashboard login: ${DASHBOARD_AUTH_EMAIL} / ${DASHBOARD_AUTH_PASSWORD}"
 echo "  Supabase API: ${SUPABASE_PUBLIC_URL}"
 echo "  Supabase Studio: ${SUPABASE_STUDIO_URL}"
@@ -162,24 +215,20 @@ echo "  Qdrant: http://127.0.0.1:${QDRANT_REST_PORT:-6333}"
 echo "  Ollama: http://127.0.0.1:${OLLAMA_PORT}"
 echo "  Model: ${OLLAMA_MODEL}"
 echo "  Studio login: ${DASHBOARD_USERNAME} / ${DASHBOARD_PASSWORD}"
-echo "  Activepieces: ${AP_FRONTEND_URL:-http://127.0.0.1:${ACTIVEPIECES_PORT:-8080}}"
+echo "  LiteLLM: ${LITELLM_URL:-http://127.0.0.1:${LITELLM_PORT:-4000}}"
+echo "  LiteLLM UI/API key: ${LITELLM_URL:-http://127.0.0.1:${LITELLM_PORT:-4000}}/ui / ${LITELLM_MASTER_KEY}"
+echo "  LangGraph: ${LANGGRAPH_URL:-http://127.0.0.1:${LANGGRAPH_PORT:-3010}}"
+echo "  LangGraph API key: ${LANGGRAPH_API_KEY}"
+echo "  Activepieces: npm run modular:activepieces:up && npm run activepieces:setup"
 echo "  Activepieces login: ${AP_OWNER_EMAIL} / ${AP_OWNER_PASSWORD}"
-echo "  Activepieces setup: npm run modular:activepieces:up && npm run activepieces:setup"
-echo "  Uptime Kuma: npm run modular:uptime:up"
-echo "  Uptime Kuma login: ${UPTIME_KUMA_ADMIN_USERNAME:-admin} / ${UPTIME_KUMA_ADMIN_PASSWORD:-ChangeMeStrong123}"
-echo "  Umami: npm run modular:umami:up"
-echo "  Umami login: ${UMAMI_ADMIN_USERNAME:-admin} / ${UMAMI_ADMIN_PASSWORD:-ChangeMeStrong123}"
-echo "  GlitchTip: npm run modular:glitchtip:up"
-echo "  GlitchTip login: ${GLITCHTIP_ADMIN_EMAIL:-admin@example.com} / ${GLITCHTIP_ADMIN_PASSWORD:-ChangeMeStrong123!}"
-echo "  Listmonk: npm run modular:listmonk:up"
-echo "  Listmonk login: ${LISTMONK_ADMIN_USERNAME:-admin} / ${LISTMONK_ADMIN_PASSWORD:-ChangeMeStrong123}"
-echo "  Zammad: npm run modular:zammad:up"
-echo "  Zammad login: ${ZAMMAD_ADMIN_EMAIL:-admin@example.com} / ${ZAMMAD_ADMIN_PASSWORD:-ChangeMeStrong123}"
-echo "  Langfuse: npm run modular:langfuse:up"
-echo "  Langfuse login: ${LANGFUSE_ADMIN_EMAIL:-admin@example.com} / ${LANGFUSE_ADMIN_PASSWORD:-ChangeMeStrong123}"
-echo "  LiteLLM: npm run modular:litellm:up"
-echo "  LiteLLM UI/API key: ${LITELLM_URL:-http://127.0.0.1:${LITELLM_PORT:-4000}}/ui / ${LITELLM_MASTER_KEY:-not-generated-yet}"
-echo "  LangGraph: npm run modular:langgraph:up"
-echo "  LangGraph API/key: ${LANGGRAPH_URL:-http://127.0.0.1:${LANGGRAPH_PORT:-3010}} / ${LANGGRAPH_API_KEY:-not-generated-yet}"
+echo "  Dashboard log: ${ROOT_DIR}/.local/dashboard.log"
+echo ""
+echo "  Optional modules (not started):"
+echo "    Uptime Kuma: npm run modular:uptime:up    (login: admin / ${UPTIME_KUMA_ADMIN_PASSWORD:-ChangeMeStrong123})"
+echo "    Umami:       npm run modular:umami:up      (login: admin / ${UMAMI_ADMIN_PASSWORD:-ChangeMeStrong123})"
+echo "    GlitchTip:   npm run modular:glitchtip:up  (login: ${GLITCHTIP_ADMIN_EMAIL:-admin@example.com} / ${GLITCHTIP_ADMIN_PASSWORD:-ChangeMeStrong123!})"
+echo "    Listmonk:    npm run modular:listmonk:up   (login: admin / ${LISTMONK_ADMIN_PASSWORD:-ChangeMeStrong123})"
+echo "    Zammad:      npm run modular:zammad:up     (login: ${ZAMMAD_ADMIN_EMAIL:-admin@example.com} / ${ZAMMAD_ADMIN_PASSWORD:-ChangeMeStrong123})"
+echo "    Langfuse:    npm run modular:langfuse:up   (login: ${LANGFUSE_ADMIN_EMAIL:-admin@example.com} / ${LANGFUSE_ADMIN_PASSWORD:-ChangeMeStrong123})"
 echo "  Local secrets: ${SUPABASE_ENV}"
 echo "  Project env: ${ROOT_DIR}/.env"

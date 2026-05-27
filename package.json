@@ -1,7 +1,8 @@
 {
   "name": "redu-os",
   "version": "0.1.0",
-  "description": "reduOS collector and self-hosted startup operations templates.",
+  "description": "reduOS — The AI operative system. Self-hosted operational loop for startups.",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "dist/server.js",
   "scripts": {
@@ -29,6 +30,8 @@
     "logs:langfuse": "bash scripts/logs-local-stack.sh langfuse",
     "logs:litellm": "bash scripts/logs-local-stack.sh litellm",
     "logs:langgraph": "bash scripts/logs-local-stack.sh langgraph",
+    "logs:dashboard": "bash scripts/modular-service.sh dashboard logs",
+    "full": "bash scripts/start-full-stack.sh",
     "stack:up": "bash scripts/start-local-stack.sh",
     "stack:test": "bash scripts/test-local-stack.sh",
     "stack:down": "bash scripts/stop-local-stack.sh",
@@ -91,6 +94,10 @@
     "modular:langgraph:logs": "bash scripts/modular-service.sh langgraph logs",
     "modular:langgraph:status": "bash scripts/modular-service.sh langgraph status",
     "langgraph:setup": "bash scripts/setup-langgraph.sh",
+    "modular:dashboard:up": "bash scripts/modular-service.sh dashboard up",
+    "modular:dashboard:down": "bash scripts/modular-service.sh dashboard down",
+    "modular:dashboard:logs": "bash scripts/modular-service.sh dashboard logs",
+    "modular:dashboard:status": "bash scripts/modular-service.sh dashboard status",
     "activepieces:setup": "bash scripts/setup-activepieces-flow.sh",
     "automation:mock": "node scripts/automation-mock-server.js",
     "automation:enable": "bash scripts/configure-automation-webhook.sh",
@@ -110,8 +117,10 @@
     "@fastify/helmet": "^12.0.1",
     "@qdrant/js-client-rest": "^1.13.0",
     "@supabase/supabase-js": "^2.47.10",
+    "@types/ws": "^8.18.1",
     "dotenv": "^16.4.7",
     "fastify": "^5.1.0",
+    "ws": "^8.21.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {

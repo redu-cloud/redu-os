@@ -123,10 +123,26 @@ fi
 
 echo "PROJECT_ID=${PROJECT_ID}"
 
-WEBHOOK_VERSION="$(curl -fsS https://registry.npmjs.org/@activepieces%2Fpiece-webhook/latest | jq -r .version || true)"
-if [ -z "$WEBHOOK_VERSION" ] || [ "$WEBHOOK_VERSION" = "null" ]; then
-  WEBHOOK_VERSION="0.1.33"
-fi
+echo "Waiting for Activepieces to sync the webhook piece (AP_PIECES_SYNC_MODE=OFFICIAL_AUTO)..."
+WEBHOOK_VERSION=""
+for i in $(seq 1 60); do
+  WEBHOOK_VERSION="$(curl -sS "${AP_LOCAL_URL}/api/v1/pieces" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    | jq -r '.[] | select(.name == "@activepieces/piece-webhook") | .version' 2>/dev/null | head -n1 || true)"
+
+  if [ -n "$WEBHOOK_VERSION" ] && [ "$WEBHOOK_VERSION" != "null" ]; then
+    echo "Webhook piece is ready (version ${WEBHOOK_VERSION})."
+    break
+  fi
+
+  if [ "$i" = "60" ]; then
+    echo "Webhook piece did not appear after 3 minutes. Pieces may still be downloading." >&2
+    echo "Wait a moment and retry: npm run activepieces:setup" >&2
+    exit 1
+  fi
+
+  sleep 3
+done
 
 flow_id_by_name() {
   local name="$1"

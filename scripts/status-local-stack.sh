@@ -36,6 +36,14 @@ container_status() {
   fi
 }
 
+container_running() {
+  local name="$1"
+  local state
+
+  state="$(podman inspect -f '{{.State.Status}}' "$name" 2>/dev/null || true)"
+  [ "$state" = "running" ]
+}
+
 service_health() {
   local name="$1"
   local url="$2"
@@ -137,35 +145,36 @@ fi
 echo
 echo "Health:"
 service_health "Collector" "http://127.0.0.1:3005/health"
+service_health "Dashboard" "http://127.0.0.1:${DASHBOARD_PORT:-3006}/login"
 service_health "Ollama" "http://127.0.0.1:${OLLAMA_PORT:-11435}/api/tags"
 service_health "Qdrant" "http://127.0.0.1:6333/collections" -H "api-key: ${QDRANT_API_KEY:-}"
 service_health "Supabase REST" "http://127.0.0.1:8000/rest/v1/" -H "apikey: ${ANON_KEY:-}"
 
-if podman container exists redu-os-activepieces 2>/dev/null; then
+if container_running redu-os-activepieces; then
   service_health "Activepieces" "http://127.0.0.1:${ACTIVEPIECES_PORT:-8080}"
 fi
-if podman container exists redu-os-uptime-kuma 2>/dev/null; then
+if container_running redu-os-uptime-kuma; then
   service_health "Uptime Kuma" "http://127.0.0.1:${UPTIME_KUMA_PORT:-3001}"
 fi
-if podman container exists redu-os-umami 2>/dev/null; then
+if container_running redu-os-umami; then
   service_health "Umami" "http://127.0.0.1:${UMAMI_PORT:-3002}"
 fi
-if podman container exists redu-os-glitchtip 2>/dev/null; then
+if container_running redu-os-glitchtip; then
   service_health "GlitchTip" "http://127.0.0.1:${GLITCHTIP_PORT:-8001}"
 fi
-if podman container exists redu-os-listmonk 2>/dev/null; then
+if container_running redu-os-listmonk; then
   service_health "Listmonk" "http://127.0.0.1:${LISTMONK_PORT:-9000}"
 fi
-if podman container exists zammad_zammad-nginx_1 2>/dev/null; then
+if container_running zammad_zammad-nginx_1; then
   service_health "Zammad" "${ZAMMAD_URL:-http://127.0.0.1:${ZAMMAD_PORT:-8081}}"
 fi
-if podman container exists redu-os-langfuse-web 2>/dev/null; then
+if container_running redu-os-langfuse-web; then
   service_health "Langfuse" "${LANGFUSE_URL:-http://127.0.0.1:${LANGFUSE_PORT:-3007}}"
 fi
-if podman container exists redu-os-litellm 2>/dev/null; then
+if container_running redu-os-litellm; then
   service_health "LiteLLM" "${LITELLM_URL:-http://127.0.0.1:${LITELLM_PORT:-4000}}/v1/models" -H "Authorization: Bearer ${LITELLM_MASTER_KEY:-}"
 fi
-if podman container exists redu-os-langgraph 2>/dev/null; then
+if container_running redu-os-langgraph; then
   service_health "LangGraph" "${LANGGRAPH_URL:-http://127.0.0.1:${LANGGRAPH_PORT:-3010}}/health"
 fi
 

@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import ws from "ws";
 import { config } from "./config.js";
 import type {
   AiActionInput,
@@ -16,6 +17,11 @@ export const supabase = createClient(
     auth: {
       persistSession: false,
       autoRefreshToken: false
+    },
+    realtime: {
+      // Node 18 has no native WebSocket — provide the ws package
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      transport: ws as any
     }
   }
 );

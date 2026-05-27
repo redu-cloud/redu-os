@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+  dashboard:
+    build:
+      context: ..
+      dockerfile: Containerfile.dashboard
+    image: localhost/redu-os-dashboard:latest
+    container_name: redu-os-dashboard
+    restart: unless-stopped
+    env_file:
+      - ../.env
+      - ../.local/supabase-local.env
+    environment:
+      DASHBOARD_PORT: ${DASHBOARD_PORT:-3006}
+    ports:
+      - "${DASHBOARD_PORT:-3006}:3006"
+    volumes:
+      # Mount Podman socket (rootless, UID 1000) for container log viewing.
+      # If your UID differs, set PODMAN_SOCKET_PATH in .env and update this path.
+      - ${PODMAN_SOCKET_PATH:-/run/user/1000/podman/podman.sock}:/run/podman/podman.sock:ro
+    extra_hosts:
+      - "host.containers.internal:host-gateway"

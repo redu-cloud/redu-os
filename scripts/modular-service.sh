@@ -32,6 +32,7 @@ Usage:
   npm run modular:langfuse:up
   npm run modular:litellm:up
   npm run modular:langgraph:up
+  npm run modular:dashboard:up
   bash scripts/modular-service.sh collector up
   bash scripts/modular-service.sh qdrant logs
 
@@ -48,6 +49,7 @@ Services:
   langfuse
   litellm
   langgraph
+  dashboard
 
 Actions:
   up
@@ -65,7 +67,7 @@ if [ -z "$SERVICE" ] || [ "$SERVICE" = "-h" ] || [ "$SERVICE" = "--help" ]; then
 fi
 
 case "$SERVICE" in
-  collector|qdrant|ollama|activepieces|uptime|umami|glitchtip|listmonk|zammad|langfuse|litellm|langgraph) ;;
+  collector|qdrant|ollama|activepieces|uptime|umami|glitchtip|listmonk|zammad|langfuse|litellm|langgraph|dashboard) ;;
   *)
     echo "Unknown modular service: ${SERVICE}" >&2
     usage >&2
@@ -177,7 +179,7 @@ case "$ACTION" in
       "${ROOT_DIR}/scripts/setup-listmonk.sh"
       podman-compose -f "$COMPOSE_FILE" up -d listmonk
       "${ROOT_DIR}/scripts/setup-listmonk.sh"
-    elif [ "$SERVICE" = "collector" ] || [ "$SERVICE" = "langgraph" ]; then
+    elif [ "$SERVICE" = "collector" ] || [ "$SERVICE" = "langgraph" ] || [ "$SERVICE" = "dashboard" ]; then
       podman-compose -f "$COMPOSE_FILE" up -d --build
     else
       podman-compose -f "$COMPOSE_FILE" up -d
@@ -308,7 +310,7 @@ case "$ACTION" in
       "${ROOT_DIR}/scripts/setup-listmonk.sh"
       podman-compose -f "$COMPOSE_FILE" up -d listmonk
       "${ROOT_DIR}/scripts/setup-listmonk.sh"
-    elif [ "$SERVICE" = "collector" ] || [ "$SERVICE" = "langgraph" ]; then
+    elif [ "$SERVICE" = "collector" ] || [ "$SERVICE" = "langgraph" ] || [ "$SERVICE" = "dashboard" ]; then
       podman-compose -f "$COMPOSE_FILE" up -d --build
     else
       podman-compose -f "$COMPOSE_FILE" up -d
@@ -451,6 +453,14 @@ case "$ACTION" in
       else
         echo "redu-os-langgraph is not present"
       fi
+    elif [ "$SERVICE" = "dashboard" ]; then
+      echo
+      echo "==> redu-os-dashboard"
+      if podman container exists redu-os-dashboard 2>/dev/null; then
+        podman logs --tail "${TAIL:-150}" redu-os-dashboard
+      else
+        echo "redu-os-dashboard is not present"
+      fi
     else
       podman logs --tail "${TAIL:-150}" "$CONTAINER_NAME"
     fi
@@ -480,6 +490,8 @@ case "$ACTION" in
       podman-compose -f "$COMPOSE_FILE" pull
     elif [ "$SERVICE" = "langgraph" ]; then
       podman build -f "${ROOT_DIR}/langgraph-app/Containerfile" -t localhost/redu-os-langgraph:latest "${ROOT_DIR}/langgraph-app"
+    elif [ "$SERVICE" = "dashboard" ]; then
+      podman build -f "${ROOT_DIR}/Containerfile.dashboard" -t localhost/redu-os-dashboard:latest "$ROOT_DIR"
     else
       podman-compose -f "$COMPOSE_FILE" pull
     fi
