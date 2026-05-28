@@ -34,6 +34,41 @@ async function httpOk(url: string, init?: RequestInit) {
   }
 }
 
+/**
+ * LiteLLM health probe — sends a 1-token chat completion instead of just
+ * pinging /health/liveliness.  This catches bad/expired API keys that the
+ * liveness endpoint doesn't detect.
+ *
+ * Returns:
+ *   true     – server reachable AND completion succeeded (key + model are valid)
+ *   "error"  – server reachable but got 4xx (bad key, wrong model, quota, …)
+ *   false    – server unreachable (network error, 5xx, timeout)
+ */
+async function litellmProbe(): Promise<boolean | "error"> {
+  if (!litellmUrl) return false;
+  const model = process.env.AI_CHAT_MODEL || "gpt-4o-mini";
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (litellmMasterKey) headers["Authorization"] = `Bearer ${litellmMasterKey}`;
+  try {
+    const resp = await fetch(`${litellmUrl}/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "hi" }],
+        max_tokens: 1
+      }),
+      signal: AbortSignal.timeout(15_000)
+    });
+    if (resp.ok) return true;
+    // 4xx → reachable but key/model/quota problem
+    if (resp.status >= 400 && resp.status < 500) return "error";
+    return false; // 5xx or unexpected
+  } catch {
+    return false; // network/timeout
+  }
+}
+
 async function qdrantCount() {
   if (!qdrantApiKey) return null;
 
@@ -106,8 +141,8 @@ async function services() {
     ollama:       httpOk(`${ollamaUrl}/api/tags`),
     activepieces: httpOk(activepiecesUrl),
     litellm:      litellmUrl
-                    ? httpOk(`${litellmUrl}/health/liveliness`)
-                    : Promise.resolve(false),
+                    ? litellmProbe()
+                    : Promise.resolve(false as boolean | "error"),
     langgraph:    langgraphUrl
                     ? httpOk(`${langgraphUrl}/health`)
                     : Promise.resolve(false),
@@ -128,7 +163,7 @@ async function services() {
   const allChecks = [...Object.values(coreChecks), ...Object.values(optionalChecks)];
   const results   = await Promise.all(allChecks);
 
-  const status: Record<string, boolean> = {};
+  const status: Record<string, boolean | "error"> = {};
   allKeys.forEach((key, i) => {
     // Skip core services that have no URL configured
     if (key === "langgraph" && !langgraphUrl) return;

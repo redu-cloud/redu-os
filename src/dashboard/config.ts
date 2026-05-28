@@ -49,7 +49,11 @@ export const glitchtipDsn  = (() => {
 export const listmonkUrl           = toContainerUrl(process.env.LISTMONK_URL, "");
 export const listmonkAdminUsername = process.env.LISTMONK_ADMIN_USERNAME ?? "admin";
 export const listmonkAdminPassword = process.env.LISTMONK_ADMIN_PASSWORD ?? "";
-export const zammadUrl     = toContainerUrl(process.env.ZAMMAD_URL, "");
+export const zammadUrl             = toContainerUrl(process.env.ZAMMAD_URL, "");
+export const zammadAdminEmail      = process.env.ZAMMAD_ADMIN_EMAIL    ?? "admin@example.com";
+export const zammadAdminPassword   = process.env.ZAMMAD_ADMIN_PASSWORD ?? "";
+export const glitchtipPublicDsn    = process.env.GLITCHTIP_DSN         ?? "";
+export const listmonkListName      = process.env.LISTMONK_LIST_NAME    ?? "Beta-Users";
 export const langfuseUrl   = toContainerUrl(process.env.LANGFUSE_URL, "");
 export const authEnabled = (process.env.DASHBOARD_AUTH_ENABLED ?? "true") !== "false";
 export const sessionSecret = process.env.DASHBOARD_SESSION_SECRET ?? process.env.JWT_SECRET ?? "dev-dashboard-secret";

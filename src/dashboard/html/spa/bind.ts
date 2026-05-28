@@ -237,11 +237,45 @@ export const spaBind = `
         }));
       },
       integrations() {
+        // Legacy copy-url buttons (kept for backward compat)
         document.querySelectorAll('.copy-url').forEach(btn=>btn.addEventListener('click',async function(){
           await navigator.clipboard.writeText(this.dataset.url).catch(()=>{});
           const o=this.textContent; this.textContent='Copied!';
           setTimeout(()=>this.textContent=o,1500);
         }));
+        // Snippet copy buttons (single + multi-pane)
+        document.querySelectorAll('.int-copy').forEach(btn=>btn.addEventListener('click',async function(){
+          await navigator.clipboard.writeText(this.dataset.code).catch(()=>{});
+          const o=this.textContent; this.textContent='Copied!'; this.style.color='var(--green)';
+          setTimeout(()=>{this.textContent=o;this.style.color='';},2000);
+        }));
+      },
+      settings() {
+        $('reset-btn')?.addEventListener('click',async function(){
+          const confirmed = window.confirm(
+            'This will permanently delete ALL events, AI insights, actions, feedback, and memory vectors.\\n\\n' +
+            'AI configuration and notification settings are NOT affected.\\n\\n' +
+            'This cannot be undone. Continue?'
+          );
+          if(!confirmed) return;
+          const btn=this, msg=$('reset-msg');
+          btn.disabled=true; btn.textContent='Resetting…';
+          if(msg){msg.textContent='';msg.style.color='';}
+          try {
+            const r = await api('/api/reset',{method:'POST'});
+            if(msg){msg.textContent='✓ All data cleared successfully.';msg.style.color='var(--green)';}
+            // Re-show onboarding widget (first-event / first-insight steps are now unmet again)
+            localStorage.removeItem('reduos-onboarding-v1');
+            localStorage.removeItem('reduos-ob-skip-notif');
+            var obEl=document.getElementById('ob-widget'); if(obEl) obEl.remove();
+            initOnboarding();
+            // Refresh current page after a moment
+            setTimeout(()=>renderPage('settings'),1200);
+          } catch(e){
+            if(msg){msg.textContent=e.message;msg.style.color='var(--red)';}
+            btn.disabled=false; btn.textContent='Reset data';
+          }
+        });
       },
       feedback() {
         $('fb-submit')?.addEventListener('click',async function(){
@@ -336,4 +370,5 @@ export const spaBind = `
       const pg=(window.location.hash.slice(1)||'overview').replace(/[^a-z0-9-]/g,'');
       const p=VALID.has(pg)?pg:'overview';
       CUR=p; activate(p); renderPage(p);
+      initOnboarding();
     })();`;

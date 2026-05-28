@@ -40,5 +40,16 @@ export const pgSettings = `async function pgSettings() {
             '</div>'+
           '</div>'+
         '</div>'+
+        '<div class="danger-zone">'+
+          '<div class="danger-zone-title">&#9888; Danger Zone</div>'+
+          '<div class="danger-zone-body">'+
+            '<div>'+
+              '<div class="danger-zone-label">Reset all data</div>'+
+              '<div class="danger-zone-desc">Permanently deletes all events, AI insights, actions, feedback, and memory vectors. AI config and notification settings are preserved.</div>'+
+            '</div>'+
+            '<button id="reset-btn" class="btn btn-danger">Reset data</button>'+
+          '</div>'+
+          '<div id="reset-msg" style="font-size:12px;margin-top:8px"></div>'+
+        '</div>'+
       '</div>';
     }`;

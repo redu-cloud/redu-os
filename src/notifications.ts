@@ -1,40 +1,7 @@
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 import { config } from "./config.js";
+import { loadPersisted, savePersisted } from "./persist.js";
 import type { StoredEvent } from "./types.js";
 import type { AiInsight } from "./ollama.js";
-
-// ── Persistent config file ────────────────────────────────────────────────────
-// Mounted as a volume: host .local/ → /app/.local/ inside the container.
-// Falls back gracefully if the directory isn't mounted (dev / non-container mode).
-const PERSIST_PATH = process.env.RUNTIME_CONFIG_PATH ?? "/app/.local/runtime-config.json";
-
-interface PersistedConfig {
-  notifications?: {
-    discord_webhook_url?: string | null;
-    slack_webhook_url?: string | null;
-    telegram_bot_token?: string | null;
-    telegram_chat_id?: string | null;
-  };
-}
-
-function loadPersisted(): PersistedConfig {
-  try {
-    return JSON.parse(readFileSync(PERSIST_PATH, "utf8")) as PersistedConfig;
-  } catch {
-    return {};
-  }
-}
-
-function savePersisted(data: PersistedConfig): void {
-  try {
-    mkdirSync(dirname(PERSIST_PATH), { recursive: true });
-    const existing = loadPersisted();
-    writeFileSync(PERSIST_PATH, JSON.stringify({ ...existing, ...data }, null, 2));
-  } catch {
-    // Best-effort — don't crash if the directory isn't mounted
-  }
-}
 
 // ── Runtime overrides — loaded from file at startup, written on every change ──
 interface NotificationOverrides {

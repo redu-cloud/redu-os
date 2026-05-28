@@ -56,7 +56,7 @@
 
 ## 🚧 In progress / next up
 
-- [ ] **LiteLLM health probe** — replace `/health/liveliness` ping with a 1-token completion so a bad API key shows "Error" on the Overview service grid
+- [x] **LiteLLM health probe** — replaced `/health/liveliness` ping with a 1-token chat completion; bad/expired API keys now show amber "Error" on the Overview service grid (tri-state: OK / Error / DOWN)
 - [ ] **Slack + Telegram notification test** — Discord confirmed working; Slack and Telegram channels need end-to-end test
 
 ---
@@ -91,6 +91,10 @@ For production deployments on 2–5 hosts (e.g. redu.cloud), the current Podman 
 - [ ] Rate limiting per source
 - [ ] Schema validation for custom event payloads (Zod)
 - [ ] Webhook signature verification (HMAC) for GlitchTip and Zammad
+
+### Security
+- [ ] **Public proxy endpoint protection** — `/api/track`, `/api/zammad/contact`, `/api/listmonk/subscribe` are currently CORS-open with no authentication; needs rate limiting and/or an optional lighter-weight public API key to prevent spam/abuse in production deployments
+- [ ] **Key rotation** — `COLLECTOR_API_KEY` rotation UI in Settings; revoke old key, generate new one, update all webhook configs
 
 ### Memory / AI
 - [ ] Memory decay — configurable TTL or relevance scoring to archive old vectors

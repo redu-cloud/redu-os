@@ -1,5 +1,6 @@
 import { spaStyles } from "./styles.js";
 import { spaUtils } from "./utils.js";
+import { spaOnboarding } from "./onboarding.js";
 import { spaNav, spaRouter } from "./nav.js";
 import { spaBind } from "./bind.js";
 import { pgOverview } from "./pages/overview.js";
@@ -33,6 +34,8 @@ ${spaNav}
 
   <script>
 ${spaUtils}
+
+${spaOnboarding}
 
 ${spaRouter}
 

@@ -17,6 +17,10 @@ import { register as registerLanggraphRoutes } from "./routes/langgraph.js";
 import { register as registerContainersRoutes } from "./routes/containers.js";
 import { register as registerSettingsRoutes } from "./routes/settings.js";
 import { register as registerNotificationsRoutes } from "./routes/notifications.js";
+import { register as registerOnboardingRoutes } from "./routes/onboarding.js";
+import { register as registerTrackRoutes } from "./routes/track.js";
+import { register as registerResetRoutes } from "./routes/reset.js";
+import { register as registerProxiesRoutes } from "./routes/proxies.js";
 import { dashboardHtml } from "./html/spa/index.js";
 import { loginHtml } from "./html/login.js";
 
@@ -34,6 +38,10 @@ registerLanggraphRoutes(app);
 registerContainersRoutes(app);
 registerSettingsRoutes(app);
 registerNotificationsRoutes(app);
+registerOnboardingRoutes(app);
+registerTrackRoutes(app);
+registerResetRoutes(app);
+registerProxiesRoutes(app);
 
 app.get("/", async (_request, reply) => {
   reply.type("text/html");

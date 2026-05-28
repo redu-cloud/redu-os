@@ -1,49 +1,423 @@
 export const pgIntegrations = `async function pgIntegrations() {
-      const d = await api('/api/summary');
-      const sv = d.services||{};
-      const cUrl = d.links?.collector||'http://127.0.0.1:3005';
+      const [d, ob] = await Promise.all([api('/api/summary'), api('/api/onboarding').catch(()=>({services:[],collector_url:'',collector_api_key:'',umami_url:null,umami_website_id:null,glitchtip_dsn:null}))]);
+      const sv   = d.services||{};
+      const cUrl = ob.collector_url || d.links?.collector || 'http://127.0.0.1:3005';
+      const apiKey = ob.collector_api_key || 'YOUR_API_KEY';
+      const dUrl = window.location.origin;
 
-      const INTS = [
-        {cat:'Event Sources', name:'GlitchTip',  key:'glitchtip',   wh:cUrl+'/v1/events/glitchtip',   docs:'Error tracking. Configure webhook in GlitchTip project settings.', optional:false},
-        {cat:'Event Sources', name:'Zammad',      key:'zammad',      wh:cUrl+'/v1/events/zammad',       docs:'Support tickets. Configure in Zammad Webhooks > Ticket created.',  optional:false},
-        {cat:'Event Sources', name:'Uptime Kuma', key:'uptime-kuma', wh:cUrl+'/v1/events/uptime-kuma',  docs:'Uptime alerts. Configure in Uptime Kuma monitor > Notification.',  optional:false},
-        {cat:'Event Sources', name:'Umami',       key:'umami',       wh:cUrl+'/v1/events/umami',        docs:'Analytics events. Use Umami > Send Data integration.',              optional:false},
-        {cat:'Event Sources', name:'Listmonk',    key:'listmonk',    wh:cUrl+'/v1/events/listmonk',     docs:'Email list events. Configure in Listmonk webhook settings.',         optional:true},
-        {cat:'Event Sources', name:'Custom App',  key:'collector',   wh:cUrl+'/v1/events',             docs:'Send any JSON event directly to the collector API with X-API-Key.',  optional:true},
-        {cat:'AI / ML',       name:'Ollama',      key:'ollama',      wh:d.links?.ollama||'http://127.0.0.1:11435', docs:'Local LLM host. deepseek-r1:1.5b for reasoning, nomic-embed-text for embeddings.', optional:false},
-        {cat:'AI / ML',       name:'LiteLLM',     key:'litellm',     wh:'http://127.0.0.1:4000',        docs:'AI gateway for routing to local or cloud models (OpenAI, Anthropic, Groq).', optional:true},
-        {cat:'AI / ML',       name:'Langfuse',    key:'langfuse',    wh:'http://127.0.0.1:3003',        docs:'LLM observability and tracing. View prompts, completions, and latencies.', optional:true},
-        {cat:'Storage',       name:'Supabase',    key:'supabase',    wh:d.links?.supabase_api||'http://127.0.0.1:8000', docs:'Postgres + REST API. Stores events, insights, actions, and feedback.', optional:false},
-        {cat:'Storage',       name:'Qdrant',      key:'qdrant',      wh:d.links?.qdrant||'http://127.0.0.1:6333', docs:'Vector memory. Stores event embeddings for similarity search.', optional:false},
-        {cat:'Automation',    name:'Activepieces', key:'activepieces', wh:d.links?.activepieces||'http://127.0.0.1:8080', docs:'No-code automation. Receives webhook triggers from reduOS actions.', optional:false},
-      ];
+      const obSvc = {};
+      (ob.services||[]).forEach(s => { obSvc[s.id] = s; });
 
-      const cats = [...new Set(INTS.map(i=>i.cat))];
-      const isEventSrc = cat => cat==='Event Sources';
+      /* ── Tab-switch for multi-language snippets ── */
+      window.msSwitch = function(id, lang) {
+        const el = document.querySelector('[data-ms-id="'+id+'"]');
+        if (!el) return;
+        el.querySelectorAll('.ms-tab').forEach(function(t) {
+          t.classList.toggle('ms-active', t.getAttribute('data-ms-lang') === lang);
+        });
+        el.querySelectorAll('.ms-pane').forEach(function(p) {
+          p.style.display = p.getAttribute('data-lang') === lang ? '' : 'none';
+        });
+      };
 
-      let html = '<div class="page-wrap"><div class="page-head"><div class="page-title">Integrations</div>'+
-        '<div class="page-sub">Connect tools, configure webhooks, and verify service health.</div></div>';
+      /* ── Protected API key reveal / copy ── */
+      window.revealKey = function() {
+        const el = document.getElementById('apik-val');
+        const btn = document.getElementById('apik-reveal');
+        if (!el || !btn) return;
+        const hidden = el.getAttribute('data-hidden') === '1';
+        if (hidden) {
+          el.textContent = apiKey;
+          el.setAttribute('data-hidden', '0');
+          btn.textContent = 'Hide';
+        } else {
+          el.textContent = '\\u2022'.repeat(Math.min(apiKey.length, 32));
+          el.setAttribute('data-hidden', '1');
+          btn.textContent = 'Reveal';
+        }
+      };
+      window.copyKey = function() {
+        navigator.clipboard.writeText(apiKey).catch(function(){});
+        const btn = document.getElementById('apik-copy');
+        if (!btn) return;
+        const orig = btn.textContent;
+        btn.textContent = '\\u2713 Copied';
+        btn.style.color = 'var(--green)';
+        setTimeout(function(){ btn.textContent = orig; btn.style.color = ''; }, 2000);
+      };
 
-      cats.forEach(cat=>{
-        const items=INTS.filter(i=>i.cat===cat);
-        html+='<h3 style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:0 0 10px">'+esc(cat)+'</h3>';
-        html+='<div class="int-grid" style="margin-bottom:24px">';
-        items.forEach(it=>{
-          const ok=sv[it.key]===true, down=sv[it.key]===false;
-          html+='<div class="int-card">'+
-            '<div class="int-head">'+
-              '<span class="int-name">'+esc(it.name)+'</span>'+
-              (it.optional?badge('Optional','optional'):ok?badge('Connected','connected'):down?badge('Down','down'):badge('No status','disabled'))+
-            '</div>'+
-            '<div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:8px">'+esc(it.docs)+'</div>'+
-            (isEventSrc(cat)?
-              '<div class="int-webhook">'+esc(it.wh)+'</div>'+
-              '<div class="int-footer"><button class="btn btn-sm copy-url" data-url="'+esc(it.wh)+'">Copy URL</button></div>' :
-              '<div class="int-footer"><a href="'+esc(it.wh)+'" target="_blank" rel="noreferrer" class="btn btn-sm">Open &nearr;</a></div>'
-            )+
+      /* ── Single-language snippet ── */
+      function snippet(lang, code) {
+        return '<div class="int-snippet">'+
+          '<div class="int-snippet-lang">'+lang+'</div>'+
+          '<pre class="int-snippet-code">'+esc(code)+'</pre>'+
+          '<button class="btn btn-sm int-copy" data-code="'+esc(code)+'">Copy</button>'+
+        '</div>';
+      }
+
+      /* ── Webhook URL snippet ── */
+      function webhookSnippet(path) {
+        const url = cUrl + path;
+        return '<div class="int-snippet">'+
+          '<div class="int-snippet-lang">Webhook URL <span class="int-header-hint">&#8212; requires X-API-Key header</span></div>'+
+          '<pre class="int-snippet-code int-url-code">'+esc(url)+'</pre>'+
+          '<button class="btn btn-sm int-copy" data-code="'+esc(url)+'">Copy URL</button>'+
+        '</div>';
+      }
+
+      /* ── Multi-language tabbed snippet ── */
+      let _msId = 0;
+      function multiSnippet(variants) {
+        const id = 'ms' + (++_msId);
+        let tabs = '', panes = '';
+        variants.forEach(function(v, i) {
+          const active = i === 0;
+          tabs += '<button class="ms-tab'+(active?' ms-active':'')+
+            '" data-ms-lang="'+esc(v.lang)+
+            '" onclick="msSwitch(&apos;'+id+'&apos;,&apos;'+esc(v.lang)+'&apos;)">'+esc(v.label||v.lang)+'</button>';
+          panes += '<div class="ms-pane" data-lang="'+esc(v.lang)+'" style="'+(active?'':'display:none')+'">'+
+            '<pre class="int-snippet-code">'+esc(v.code)+'</pre>'+
+            '<button class="btn btn-sm int-copy" data-code="'+esc(v.code)+'">Copy</button>'+
           '</div>';
         });
-        html+='</div>';
+        return '<div class="multi-snippet" data-ms-id="'+id+'">'+
+          '<div class="ms-tabs">'+tabs+'</div>'+
+          '<div class="ms-panes">'+panes+'</div>'+
+        '</div>';
+      }
+
+      /* ── Section divider (label is plain text, no HTML entities) ── */
+      function snippetSection(label) {
+        return '<div class="int-snippet-section">'+label+'</div>';
+      }
+
+      const umamiSrc  = ob.umami_url        || '';
+      const umamiId   = ob.umami_website_id  || 'YOUR_WEBSITE_ID';
+      const gtDsn     = ob.glitchtip_dsn    || 'http://KEY@your-glitchtip-host/PROJECT_ID';
+
+      /* Docs link rendered next to service name */
+      function docsLink(url, label) {
+        return ' <a href="'+esc(url)+'" target="_blank" rel="noreferrer" class="int-docs-link">'+esc(label)+' &#8599;</a>';
+      }
+
+      /* Key-note: shows header name + silent copy button, never displays key in plain text */
+      function keyNote(text) {
+        return '<div class="int-key-note">&#128273; '+text+
+          ' <code>X-API-Key: &bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;</code>'+
+          ' <button class="btn btn-sm int-copy int-key-copy" data-code="'+esc(apiKey)+'">Copy key</button>'+
+          '</div>';
+      }
+
+      const SRCS = [
+        { key:'glitchtip',  id:'glitchtip',   name:'GlitchTip',
+          docs: docsLink('https://glitchtip.com/documentation', 'Docs'),
+          badge:'Error tracking',
+          desc:'Forward error notifications from GlitchTip via webhook, and track errors from your app with the Sentry-compatible SDK.',
+          setup:
+            webhookSnippet('/v1/events/glitchtip') +
+            keyNote('Add as Webhook in GlitchTip &#8594; Settings &#8594; Webhooks. Set custom header:') +
+            snippetSection('Track errors from your app →') +
+            multiSnippet([
+              { lang: 'browser', label: 'Browser (JS)', code:
+                'import * as Sentry from "@sentry/browser";\\n\\n' +
+                'Sentry.init({\\n' +
+                '  dsn: "'+gtDsn+'",\\n' +
+                '  tracesSampleRate: 0,\\n' +
+                '});'
+              },
+              { lang: 'node', label: 'Node.js', code:
+                'const Sentry = require("@sentry/node");\\n\\n' +
+                'Sentry.init({\\n' +
+                '  dsn: "'+gtDsn+'",\\n' +
+                '});'
+              },
+              { lang: 'python', label: 'Python', code:
+                'import sentry_sdk\\n\\n' +
+                'sentry_sdk.init(\\n' +
+                '    dsn="'+gtDsn+'",\\n' +
+                '    traces_sample_rate=0,\\n' +
+                ')'
+              },
+              { lang: 'go', label: 'Go', code:
+                'import "github.com/getsentry/sentry-go"\\n\\n' +
+                'sentry.Init(sentry.ClientOptions{\\n' +
+                '    Dsn: "'+gtDsn+'",\\n' +
+                '})'
+              }
+            ])
+        },
+
+        { key:'zammad',     id:'zammad',      name:'Zammad',
+          docs: docsLink('https://docs.zammad.org/en/latest/api/intro.html', 'API Docs'),
+          badge:'Support tickets',
+          desc:'Receive ticket events from Zammad via webhook, and let visitors submit support requests from any website.',
+          setup:
+            webhookSnippet('/v1/events/zammad') +
+            keyNote('Add as Webhook in Zammad: Admin &#8594; Webhooks &#8594; New. Under &ldquo;Custom Payload Headers&rdquo; add:') +
+            snippetSection('Create tickets from your website →') +
+            multiSnippet([
+              { lang: 'curl', label: 'cURL', code:
+                'curl -X POST "'+dUrl+'/api/zammad/contact"\\n' +
+                '  -H "Content-Type: application/json"\\n' +
+                '  -d \\\'{"name":"Jane Doe","email":"jane@example.com","subject":"Question","message":"Hello!"}\\\''
+              },
+              { lang: 'fetch', label: 'Fetch', code:
+                'fetch("'+dUrl+'/api/zammad/contact", {\\n' +
+                '  method: "POST",\\n' +
+                '  headers: { "Content-Type": "application/json" },\\n' +
+                '  body: JSON.stringify({\\n' +
+                '    name:    name,      // string\\n' +
+                '    email:   email,     // string, required\\n' +
+                '    subject: subject,   // string (optional)\\n' +
+                '    message: message    // string, required\\n' +
+                '  })\\n' +
+                '});'
+              },
+              { lang: 'axios', label: 'Axios', code:
+                'axios.post("'+dUrl+'/api/zammad/contact", {\\n' +
+                '  name:    name,\\n' +
+                '  email:   email,\\n' +
+                '  subject: subject,\\n' +
+                '  message: message\\n' +
+                '});'
+              },
+              { lang: 'python', label: 'Python', code:
+                'import requests\\n\\n' +
+                'requests.post("'+dUrl+'/api/zammad/contact", json={\\n' +
+                '    "name":    "Jane Doe",\\n' +
+                '    "email":   "jane@example.com",\\n' +
+                '    "subject": "Question",\\n' +
+                '    "message": "Hello!"\\n' +
+                '})'
+              },
+              { lang: 'go', label: 'Go', code:
+                'import (\\n' +
+                '    "bytes"; "encoding/json"; "net/http"\\n' +
+                ')\\n\\n' +
+                'body, _ := json.Marshal(map[string]string{\\n' +
+                '    "name":    "Jane Doe",\\n' +
+                '    "email":   "jane@example.com",\\n' +
+                '    "subject": "Question",\\n' +
+                '    "message": "Hello!",\\n' +
+                '})\\n' +
+                'http.Post("'+dUrl+'/api/zammad/contact", "application/json", bytes.NewReader(body))'
+              }
+            ])
+        },
+
+        { key:'uptime-kuma',id:'uptime_kuma', name:'Uptime Kuma',
+          docs: docsLink('https://github.com/louislam/uptime-kuma/wiki', 'Wiki'),
+          badge:'Uptime alerts',
+          desc:'Forward monitor alerts from Uptime Kuma. Open your monitor &#8594; Edit &#8594; Notifications &#8594; Add Notification (Webhook type).',
+          setup:
+            webhookSnippet('/v1/events/uptime-kuma') +
+            keyNote('In Uptime Kuma set the Webhook URL above. Under &ldquo;Additional Headers&rdquo; add:')
+        },
+
+        { key:'umami',      id:'umami',       name:'Umami',
+          docs: docsLink('https://umami.is/docs', 'Docs'),
+          badge:'Analytics',
+          desc:'Track website visitors and custom events. Paste the script into your &lt;head&gt;, then call <code>umami.track()</code> for important user actions.',
+          setup: (umamiSrc
+            ? multiSnippet([
+                { lang: 'script', label: 'HTML Script', code:
+                  '<script async defer\\n  src="'+umamiSrc+'/script.js"\\n  data-website-id="'+umamiId+'"\\n><\\/script>'
+                },
+                { lang: 'events', label: 'Track Events', code:
+                  '// Track a custom event (call after the script loads)\\n' +
+                  'umami.track(\\'signup\\', { plan: \\'free\\' });\\n\\n' +
+                  '// Track a button click\\n' +
+                  'umami.track(\\'cta-click\\', { page: location.pathname });\\n\\n' +
+                  '// Track a form submission\\n' +
+                  'umami.track(\\'contact-form\\', { status: \\'submitted\\' });\\n\\n' +
+                  '// Track a purchase\\n' +
+                  'umami.track(\\'purchase\\', { amount: 49, plan: \\'pro\\' });\\n\\n' +
+                  '// Manual pageview (single-page apps)\\n' +
+                  'umami.track();'
+                }
+              ])
+            : '<div style="font-size:12px;color:var(--muted);padding:6px 0">Umami URL not configured in .env</div>')
+        },
+
+        { key:'collector',  id:'website',     name:'Custom App / Website',
+          docs: docsLink('https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API', 'Fetch API'),
+          badge:'Custom events',
+          desc:'Send any event from your app or website. The /api/track endpoint is CORS-open &#8212; no API key needed in the browser.',
+          setup: multiSnippet([
+            { lang: 'curl', label: 'cURL', code:
+              'curl -X POST "'+dUrl+'/api/track"\\n' +
+              '  -H "Content-Type: application/json"\\n' +
+              '  -d \\\'{"source":"website","type":"pageview","message":"Home","metadata":{"url":"https://example.com"}}\\\''
+            },
+            { lang: 'fetch', label: 'Fetch', code:
+              'fetch("'+dUrl+'/api/track", {\\n' +
+              '  method: "POST",\\n' +
+              '  headers: { "Content-Type": "application/json" },\\n' +
+              '  body: JSON.stringify({\\n' +
+              '    source: "website",\\n' +
+              '    type:   "pageview",   // or "signup", "purchase", ...\\n' +
+              '    message: document.title,\\n' +
+              '    metadata: { url: location.href }\\n' +
+              '  })\\n' +
+              '});'
+            },
+            { lang: 'axios', label: 'Axios', code:
+              'axios.post("'+dUrl+'/api/track", {\\n' +
+              '  source: "website",\\n' +
+              '  type:   "pageview",\\n' +
+              '  message: document.title,\\n' +
+              '  metadata: { url: location.href }\\n' +
+              '});'
+            },
+            { lang: 'python', label: 'Python', code:
+              'import requests\\n\\n' +
+              'requests.post("'+dUrl+'/api/track", json={\\n' +
+              '    "source":  "website",\\n' +
+              '    "type":    "pageview",\\n' +
+              '    "message": "Page Title",\\n' +
+              '    "metadata": {"url": "https://example.com"}\\n' +
+              '})'
+            },
+            { lang: 'go', label: 'Go', code:
+              'import (\\n' +
+              '    "bytes"; "encoding/json"; "net/http"\\n' +
+              ')\\n\\n' +
+              'body, _ := json.Marshal(map[string]any{\\n' +
+              '    "source":   "website",\\n' +
+              '    "type":     "pageview",\\n' +
+              '    "message":  "Page Title",\\n' +
+              '    "metadata": map[string]string{"url": "https://example.com"},\\n' +
+              '})\\n' +
+              'http.Post("'+dUrl+'/api/track", "application/json", bytes.NewReader(body))'
+            }
+          ])
+        },
+
+        { key:'listmonk',   id:'listmonk',    name:'Listmonk',
+          docs: docsLink('https://listmonk.app/docs/', 'Docs'),
+          badge:'Email list',
+          desc:'Receive subscriber events from Listmonk via webhook, and let visitors subscribe to your beta list from any website.',
+          setup:
+            webhookSnippet('/v1/events/listmonk') +
+            keyNote('Add as Webhook in Listmonk: Settings &#8594; Webhooks. Add header:') +
+            snippetSection('Subscribe users from your website →') +
+            multiSnippet([
+              { lang: 'curl', label: 'cURL', code:
+                'curl -X POST "'+dUrl+'/api/listmonk/subscribe"\\n' +
+                '  -H "Content-Type: application/json"\\n' +
+                '  -d \\\'{"name":"Jane Doe","email":"jane@example.com"}\\\''
+              },
+              { lang: 'fetch', label: 'Fetch', code:
+                'fetch("'+dUrl+'/api/listmonk/subscribe", {\\n' +
+                '  method: "POST",\\n' +
+                '  headers: { "Content-Type": "application/json" },\\n' +
+                '  body: JSON.stringify({\\n' +
+                '    name:  name,   // string (optional)\\n' +
+                '    email: email   // string, required\\n' +
+                '  })\\n' +
+                '});'
+              },
+              { lang: 'axios', label: 'Axios', code:
+                'axios.post("'+dUrl+'/api/listmonk/subscribe", {\\n' +
+                '  name:  name,\\n' +
+                '  email: email\\n' +
+                '});'
+              },
+              { lang: 'python', label: 'Python', code:
+                'import requests\\n\\n' +
+                'requests.post("'+dUrl+'/api/listmonk/subscribe", json={\\n' +
+                '    "name":  "Jane Doe",\\n' +
+                '    "email": "jane@example.com"\\n' +
+                '})'
+              },
+              { lang: 'go', label: 'Go', code:
+                'import (\\n' +
+                '    "bytes"; "encoding/json"; "net/http"\\n' +
+                ')\\n\\n' +
+                'body, _ := json.Marshal(map[string]string{\\n' +
+                '    "name":  "Jane Doe",\\n' +
+                '    "email": "jane@example.com",\\n' +
+                '})\\n' +
+                'http.Post("'+dUrl+'/api/listmonk/subscribe", "application/json", bytes.NewReader(body))'
+              }
+            ])
+        },
+      ];
+
+      const OTHERS = [
+        { cat:'AI / ML',  name:'Ollama',       key:'ollama',       url:d.links?.ollama||'http://127.0.0.1:11435', docs:'https://ollama.com/library',               desc:'Local LLM host. deepseek-r1:1.5b for chat, nomic-embed-text for embeddings.' },
+        { cat:'AI / ML',  name:'LiteLLM',      key:'litellm',      url:'http://127.0.0.1:4000',                   docs:'https://docs.litellm.ai/',                 desc:'AI gateway &#8212; routes requests to OpenAI, Anthropic, Groq, and other providers.' },
+        { cat:'AI / ML',  name:'Langfuse',      key:'langfuse',     url:'http://127.0.0.1:3003',                   docs:'https://langfuse.com/docs',               desc:'LLM observability. View every prompt, completion, latency, and cost.' },
+        { cat:'Storage',  name:'Supabase',      key:'supabase',     url:d.links?.supabase_api||'http://127.0.0.1:8000', docs:'https://supabase.com/docs',          desc:'Postgres + REST API. Stores events, insights, actions, and feedback.' },
+        { cat:'Storage',  name:'Qdrant',        key:'qdrant',       url:d.links?.qdrant||'http://127.0.0.1:6333',  docs:'https://qdrant.tech/documentation/',      desc:'Vector memory. Stores embeddings for semantic similarity search.' },
+        { cat:'Automation',name:'Activepieces', key:'activepieces', url:d.links?.activepieces||'http://127.0.0.1:8080', docs:'https://www.activepieces.com/docs',  desc:'No-code automation. Receives webhook triggers from reduOS actions.' },
+      ];
+
+      let html = '<div class="page-wrap"><div class="page-head"><div class="page-title">Integrations</div>'+
+        '<div class="page-sub">Connect your tools, copy setup snippets, and verify service health.</div></div>';
+
+      /* ── API key card ── */
+      html += '<div class="int-key-card">'+
+        '<div class="int-key-card-info">'+
+          '<div class="int-key-card-label">Collector API Key</div>'+
+          '<div class="int-key-card-note">Authenticates webhooks and internal service calls. Use as <code>X-API-Key</code> header.</div>'+
+        '</div>'+
+        '<div class="int-key-card-row">'+
+          '<code class="int-key-val" id="apik-val" data-hidden="1">'+
+            '\\u2022'.repeat(Math.min(apiKey.length, 32))+
+          '</code>'+
+          '<button class="btn btn-sm" id="apik-reveal" onclick="revealKey()">Reveal</button>'+
+          '<button class="btn btn-sm" id="apik-copy" onclick="copyKey()">Copy</button>'+
+        '</div>'+
+      '</div>';
+
+      html += '<h3 class="int-section-title">Event Sources</h3>';
+      html += '<div class="int-src-grid">';
+
+      SRCS.forEach(function(it) {
+        const ok        = sv[it.key] === true;
+        const obEntry   = obSvc[it.id];
+        const evCount   = obEntry ? obEntry.events : 0;
+        const hasEvents = evCount > 0;
+
+        const statusBadge = hasEvents
+          ? '<span class="badge badge-connected">&#10003; '+evCount+' event'+(evCount===1?'':'s')+' received</span>'
+          : ok
+            ? badge('Service up','connected')
+            : sv[it.key] === false
+              ? badge('Down','down')
+              : badge(it.badge,'optional');
+
+        html += '<div class="int-card int-src-card">'+
+          '<div class="int-head">'+
+            '<span class="int-name">'+esc(it.name)+'</span>'+
+            (it.docs||'')+
+            statusBadge+
+          '</div>'+
+          '<div class="int-desc">'+it.desc+'</div>'+
+          it.setup+
+        '</div>';
+      });
+
+      html += '</div>';
+
+      const otherCats = [...new Set(OTHERS.map(o=>o.cat))];
+      otherCats.forEach(function(cat) {
+        html += '<h3 class="int-section-title">'+esc(cat)+'</h3><div class="int-grid" style="margin-bottom:24px">';
+        OTHERS.filter(o=>o.cat===cat).forEach(function(it) {
+          const ok   = sv[it.key] === true;
+          const down = sv[it.key] === false;
+          html += '<div class="int-card">'+
+            '<div class="int-head">'+
+              '<span class="int-name">'+esc(it.name)+'</span>'+
+              '<a href="'+esc(it.docs)+'" target="_blank" rel="noreferrer" class="int-docs-link">Docs &#8599;</a>'+
+              (ok?badge('OK','connected'):down?badge('Down','down'):badge('No status','disabled'))+
+            '</div>'+
+            '<div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:8px">'+it.desc+'</div>'+
+            '<div class="int-footer"><a href="'+esc(it.url)+'" target="_blank" rel="noreferrer" class="btn btn-sm">Open &nearr;</a></div>'+
+          '</div>';
+        });
+        html += '</div>';
       });
 
       return html+'</div>';

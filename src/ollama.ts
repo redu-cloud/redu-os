@@ -1,9 +1,11 @@
 import { config } from "./config.js";
 import { traceAiGeneration } from "./langfuse.js";
+import { loadPersisted, savePersisted } from "./persist.js";
 import type { StoredEvent } from "./types.js";
 
 // Runtime config overrides — survive for the lifetime of the process.
 // Any field set here wins over the frozen `config` object parsed at startup.
+// Changes are also persisted to .local/runtime-config.json so they survive restarts.
 interface RuntimeOverrides {
   ai_provider?: string | null;
   ai_chat_model?: string | null;
@@ -12,14 +14,25 @@ interface RuntimeOverrides {
   ollama_model?: string | null;
   ollama_embed_model?: string | null;
 }
-let _overrides: RuntimeOverrides = {};
+
+// Restore from disk at startup so restarts don't lose AI provider/model changes
+const _persisted = loadPersisted();
+let _overrides: RuntimeOverrides = { ...(_persisted.ai ?? {}) };
+
+function _persist(): void {
+  savePersisted({ ai: { ..._overrides } });
+}
 
 export function applyConfigOverrides(patch: RuntimeOverrides): void {
   _overrides = { ..._overrides, ...patch };
+  _persist();
 }
 export function getConfigOverrides(): RuntimeOverrides { return { ..._overrides }; }
 // Back-compat for the provider switch (used by server.ts)
-export function setProviderOverride(p: string | null): void { _overrides.ai_provider = p; }
+export function setProviderOverride(p: string | null): void {
+  _overrides.ai_provider = p;
+  _persist();
+}
 export function getProviderOverride(): string | null { return _overrides.ai_provider ?? null; }
 export function getActiveProvider(): string { return _overrides.ai_provider ?? config.AI_PROVIDER; }
 

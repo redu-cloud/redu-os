@@ -19,5 +19,8 @@ services:
       # Mount Podman socket (rootless, UID 1000) for container log viewing.
       # If your UID differs, set PODMAN_SOCKET_PATH in .env and update this path.
       - ${PODMAN_SOCKET_PATH:-/run/user/1000/podman/podman.sock}:/run/podman/podman.sock:ro
+      # Read-only mount of .local/ so dashboard can read service config files
+      # (e.g. .local/listmonk/list.env for the beta-list UUID)
+      - ../.local:/app/.local:ro
     extra_hosts:
       - "host.containers.internal:host-gateway"

@@ -4,8 +4,8 @@ export const pgOverview = `async function pgOverview() {
       const ev = d.events||[], ins = d.insights||[], act = d.actions||[], fb = d.feedback||[];
       const failed = act.filter(a=>a.status==='failed');
       const pending = act.filter(a=>a.status==='pending_approval');
-      const downSvcs = Object.entries(sv).filter(([,ok])=>!ok);
-      const svcOk = Object.values(sv).filter(Boolean).length;
+      const downSvcs = Object.entries(sv).filter(([,ok])=>ok!==true);
+      const svcOk = Object.values(sv).filter(v=>v===true).length;
 
       const attention = [
         ...failed.map(a=>({ico:'&#10060;', txt:'Failed action: '+esc(a.action_type), sub:esc(a.target||'')})),
@@ -87,12 +87,15 @@ export const pgOverview = `async function pgOverview() {
             '<div class="card">'+
               '<div class="card-head"><span class="card-title">Core Services</span></div>'+
               '<div style="padding:0 12px">'+
-                Object.entries(sv).map(([name,ok])=>
-                  '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 4px;border-bottom:1px solid var(--line);font-size:13px">'+
+                Object.entries(sv).map(([name,ok])=>{
+                  const sColor = ok===true?'var(--green)':ok==='error'?'var(--amber)':'var(--red)';
+                  const sDot   = '<span class="dot '+(ok===true?'dot-ok':ok==='error'?'dot-warn':'dot-bad')+'"></span>';
+                  const sLabel = ok===true?'OK':ok==='error'?'Error':'DOWN';
+                  return '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 4px;border-bottom:1px solid var(--line);font-size:13px">'+
                     '<span style="font-weight:600;color:var(--ink-2)">'+esc(name)+'</span>'+
-                    '<span style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:'+(ok?'var(--green)':'var(--red)')+'">'+dot(ok)+(ok?'OK':'DOWN')+'</span>'+
-                  '</div>'
-                ).join('')+
+                    '<span style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:'+sColor+'">'+sDot+sLabel+'</span>'+
+                  '</div>';
+                }).join('')+
               '</div>'+
             '</div>'+
             '<div class="card">'+

@@ -88,7 +88,7 @@ export function clearSessionCookie(reply: { header: (name: string, value: string
 export function registerAuthHook(app: FastifyInstance): void {
   app.addHook("preHandler", async (request, reply) => {
     const path = request.url.split("?")[0];
-    const publicPaths = new Set(["/login", "/api/auth/login", "/api/auth/logout"]);
+    const publicPaths = new Set(["/login", "/api/auth/login", "/api/auth/logout", "/api/track", "/api/zammad/contact", "/api/listmonk/subscribe"]);
     if (publicPaths.has(path)) return;
 
     const user = await currentUser(request.headers.cookie);
