@@ -17,7 +17,7 @@ Connect your tools. Watch events. Get AI insights. Automate. Remember what worke
 
 ---
 
-![reduOS dashboard — Overview page showing live event loop, AI insights, and service health](dark-after.png)
+![reduOS dashboard — Overview page showing live event loop, AI insights, and service health](docs/images/overview.png)
 
 ---
 
@@ -47,7 +47,7 @@ npm install
 npm run full
 ```
 
-`npm run full` starts all 13 services. The first run pulls `deepseek-r1:1.5b` and `nomic-embed-text` — allow a few minutes.
+`npm run full` starts all services. The first run pulls `deepseek-r1:1.5b` and `nomic-embed-text` — allow a few minutes.
 
 Open **http://127.0.0.1:3006** and sign in:
 
@@ -93,7 +93,7 @@ npm run modular:listmonk:up     # Listmonk email
 npm run modular:umami:up        # Umami analytics
 ```
 
-![Integrations page showing webhook endpoints and service status](integrations-page.png)
+![reduOS integrations page showing webhook endpoints, code snippets, and service status](docs/images/integrations.png)
 
 ---
 
@@ -134,16 +134,32 @@ Switch provider or model without restarting from `/#ai-config` in the dashboard.
 
 ## Stack
 
+`npm run full` starts 13 services across two groups:
+
+**Core — always running:**
+
 | Service | Port | Purpose |
 |---|---|---|
-| Collector (Fastify/TypeScript) | 3005 | Event ingestion and AI loop |
+| Collector (Fastify/TypeScript) | 3005 | Event ingestion, AI loop, webhook endpoints |
 | Dashboard (Fastify/TypeScript) | 3006 | 12-page SPA — events, insights, actions, memory, logs |
-| Supabase | 8000 | Structured storage (events, insights, actions, feedback) |
+| Supabase API | 8000 | Structured storage (events, insights, actions, feedback) |
+| Supabase Studio | 3000 | Database browser |
 | Qdrant | 6333 | Vector memory for semantic retrieval |
-| Ollama | 11435 | Local AI models |
-| LiteLLM | 4000 | AI gateway (OpenAI/Anthropic/Gemini/Groq/OpenRouter) |
-| LangGraph | 3010 | Multi-step agent workflows |
-| Activepieces | 8080 | Automation flows triggered by insights |
+| Ollama | 11435 | Local AI models (deepseek-r1, nomic-embed-text) |
+| LiteLLM | 4000 | AI gateway — routes to OpenAI, Anthropic, Gemini, Groq, OpenRouter |
+| LangGraph | 3010 | Multi-step agent workflows (Python/FastAPI) |
+| Activepieces | 8080 | Automation flows triggered by AI insights |
+
+**Optional modules — started individually:**
+
+| Service | Port | Purpose |
+|---|---|---|
+| Uptime Kuma | 3001 | Uptime monitoring with alerting |
+| Umami | 3002 | Privacy-friendly analytics |
+| GlitchTip | 8001 | Error tracking (Sentry-compatible) |
+| Listmonk | 9000 | Email lists and campaigns |
+| Zammad | 8081 | Support desk / helpdesk |
+| Langfuse | 3007 | LLM tracing and observability |
 
 ---
 

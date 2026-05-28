@@ -6,6 +6,8 @@ node_modules/
 *.png
 *.jpg
 *.jpeg
+!docs/images/
+!docs/images/*.png
 .npm/
 *.log
 *.pid
