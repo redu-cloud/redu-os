@@ -1,39 +1,43 @@
+<div align="center">
+
 # reduOS
 
-Self-hosted AI operations layer for startups. It connects your existing tools — error tracking, support, uptime, analytics, email — into one loop that watches for events, generates AI insights, triggers automation, and remembers what worked.
+**The self-hosted AI operative system for startups**
+
+Connect your tools. Watch events. Get AI insights. Automate. Remember what worked.
+
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Podman](https://img.shields.io/badge/Podman-ready-892CA0?logo=podman&logoColor=white)](https://podman.io/)
+[![Tests](https://img.shields.io/badge/tests-65%20passing-brightgreen)](#testing)
+
+[Quick Start](#quick-start) · [Integrations](#integrations) · [How it learns](#how-it-learns) · [Contributing](#contributing) · [Docs](docs/)
+
+</div>
+
+---
+
+![reduOS dashboard — Overview page showing live event loop, AI insights, and service health](dark-after.png)
+
+---
+
+## What is reduOS?
+
+reduOS is a self-hosted operations layer that sits between your tools and your team. It collects events from error trackers, support desks, uptime monitors, analytics, and email tools — normalises them into one schema, runs AI analysis, triggers automation, and stores every outcome as memory for future decisions.
+
+The core loop:
 
 ```
 Event → Collector → Supabase → Qdrant memory → AI analysis → Activepieces → Notifications → Feedback → Future context
 ```
 
-Each time an event is resolved (ticket closed, downtime recovered, error fixed), reduOS records the outcome and links it back to the original event. The next time something similar happens, the AI has that history as context.
+Every time something is resolved — a ticket closed, downtime recovered, an error fixed — reduOS links the outcome back to the original event. The next time something similar happens, the AI sees what happened last time.
 
 ---
 
-## What it connects
+## Quick Start
 
-| Tool | Events |
-|---|---|
-| **GlitchTip** | Error created, error resolved |
-| **Zammad** | Ticket created, ticket resolved |
-| **Uptime Kuma** | Monitor down, monitor recovered |
-| **Umami** | Page views, custom events |
-| **Listmonk** | Subscriber joined, subscriber churned |
-| **Custom apps** | Any event via the generic `/v1/events` endpoint |
-
-Insights go to **Discord, Slack, or Telegram**. Automation runs through **Activepieces**. Memory lives in **Qdrant**. Everything is stored in **Supabase**.
-
----
-
-## Dashboard
-
-A 12-page self-hosted dashboard: events, AI insights, automation actions, memory search, container logs, notification config, AI provider config.
-
----
-
-## Quick start
-
-Requirements: [Podman](https://podman.io/) and [podman-compose](https://github.com/containers/podman-compose).
+> Requires [Podman](https://podman.io/) and [podman-compose](https://github.com/containers/podman-compose).
 
 ```bash
 git clone https://github.com/redu-cloud/redu-os
@@ -43,162 +47,166 @@ npm install
 npm run full
 ```
 
-`npm run full` starts all services (Supabase, Qdrant, Ollama, LiteLLM, LangGraph, Activepieces, collector, dashboard). First run downloads `deepseek-r1:1.5b` and `nomic-embed-text` — takes a few minutes.
+`npm run full` starts all 13 services. The first run pulls `deepseek-r1:1.5b` and `nomic-embed-text` — allow a few minutes.
 
-Open `http://127.0.0.1:3006` and sign in with `admin@example.com / ChangeMeStrong123!`.
+Open **http://127.0.0.1:3006** and sign in:
 
-**Useful commands after boot:**
-
-```bash
-npm run status           # Check what's running
-npm run doctor           # Health check all services
-npm run demo:full        # End-to-end event → AI → automation demo
-npm run logs             # Tail all logs
-npm run stack:down       # Stop everything
+```
+Email:    admin@example.com
+Password: ChangeMeStrong123!
 ```
 
-**Individual modules** (if you don't want the full stack):
+**Useful commands:**
 
 ```bash
-npm run modular:uptime:up      # Uptime Kuma
-npm run modular:glitchtip:up   # GlitchTip error tracking
-npm run modular:zammad:up      # Zammad support
-npm run modular:listmonk:up    # Listmonk email
-npm run modular:umami:up       # Umami analytics
+npm run status        # Check what's running
+npm run doctor        # Health check all services and models
+npm run demo:full     # End-to-end demo: event → AI → automation → notification
+npm run logs          # Tail all logs
+npm run stack:down    # Stop everything
 ```
 
 ---
 
-## Configuration
+## Integrations
 
-Edit `.env` before starting. The main values:
+reduOS connects to the tools startups already use:
 
-| Variable | Purpose |
+| Tool | Events captured | Full AI loop |
+|---|---|---|
+| **GlitchTip** | Error created, error resolved | ✅ |
+| **Zammad** | Ticket created, ticket resolved | ✅ |
+| **Uptime Kuma** | Monitor down, monitor recovered | ✅ |
+| **Listmonk** | Subscriber joined, subscriber churned | ✅ |
+| **Umami** | Page views, custom events | ✅ |
+| **Custom apps** | Any event via `/v1/events` | ✅ |
+
+**Full AI loop** means: event received → stored in Supabase → embedded in Qdrant → AI generates insight → Activepieces triggers automation → Discord/Slack/Telegram notification fires → outcome linked back as feedback.
+
+Each service can be started as an optional module:
+
+```bash
+npm run modular:glitchtip:up    # GlitchTip error tracking
+npm run modular:zammad:up       # Zammad support desk
+npm run modular:uptime:up       # Uptime Kuma monitoring
+npm run modular:listmonk:up     # Listmonk email
+npm run modular:umami:up        # Umami analytics
+```
+
+![Integrations page showing webhook endpoints and service status](integrations-page.png)
+
+---
+
+## How it learns
+
+Most ops tools fire alerts and forget. reduOS records outcomes.
+
+When a ticket is resolved, reduOS automatically finds the original `ticket.created` event, calculates how long it took, and writes a scored feedback record linked to the AI insight and action that fired. When a monitor recovers, the same happens for the downtime event.
+
+```
+support ticket created (ticket_id: 42)
+  → AI insight: "auth service issue, check JWT config"
+  → Activepieces: creates Notion task
+  → [3 hours later] ticket closed
+  → auto-feedback: score +1, delta 3h, linked to original event
+```
+
+Next time a similar ticket arrives, the AI receives: *"last time this happened, it took 3 hours to resolve via JWT config fix."*
+
+This context lives in Qdrant vector memory and is retrieved by semantic similarity — no manual tagging required.
+
+---
+
+## AI Configuration
+
+AI provider is set in `.env` and switchable at runtime from the dashboard (`/#ai-config`):
+
+| Provider | Config |
 |---|---|
-| `COLLECTOR_API_KEY` | Secret for all webhook endpoints — change this |
-| `AI_PROVIDER` | `ollama` (local), `litellm` (gateway), `openai-compatible`, `fallback` |
-| `OLLAMA_MODEL` | Local chat model (default: `deepseek-r1:1.5b`) |
-| `DISCORD_WEBHOOK_URL` | Notifications (optional) |
-| `SLACK_WEBHOOK_URL` | Notifications (optional) |
-| `OPENAI_API_KEY` | If you want GPT-4o-mini via LiteLLM |
+| **Ollama** (default) | `AI_PROVIDER=ollama`, `OLLAMA_MODEL=deepseek-r1:1.5b` |
+| **LiteLLM gateway** | `AI_PROVIDER=litellm` — routes to OpenAI, Anthropic, Gemini, Groq, OpenRouter |
+| **OpenAI-compatible** | `AI_PROVIDER=openai-compatible` + `AI_CHAT_BASE_URL` |
+| **Fallback** | `AI_PROVIDER=fallback` — stores events, skips model calls |
 
-AI provider and model can also be changed at runtime from the dashboard (`/#ai-config`) without restarting.
+Switch provider or model without restarting from `/#ai-config` in the dashboard.
 
 ---
 
-## Sending events
+## Stack
 
-All collector endpoints require `X-API-Key: your-collector-key`.
-
-```bash
-curl -X POST http://127.0.0.1:3005/v1/events \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: change-me-please" \
-  -d '{
-    "type": "support.ticket.created",
-    "source": "zammad",
-    "severity": "medium",
-    "message": "User cannot complete onboarding",
-    "user": { "email": "user@example.com" },
-    "metadata": { "ticket_id": "42" }
-  }'
-```
-
-Response includes the stored event ID, AI insight, automation result, and memory status.
-
-See [docs/integration-webhooks.md](docs/integration-webhooks.md) for webhook setup per tool and [examples/](examples/) for more curl examples.
-
----
-
-## Architecture
-
-```
-                        ┌─────────────────────────────────────────────┐
-                        │                 reduOS                      │
-                        │                                             │
-  GlitchTip ──────────► │  Collector (Fastify/TS)                    │
-  Zammad ──────────────► │    normalizers.ts                          │
-  Uptime Kuma ─────────► │    ↓                                       │
-  Umami ───────────────► │  Supabase (startup_events,                 │
-  Listmonk ────────────► │           ai_insights, ai_actions,         │
-  Custom apps ─────────► │           ai_feedback)                     │
-                        │    ↓                                        │
-                        │  Qdrant (vector memory)                     │
-                        │    ↓                                        │
-                        │  Ollama / LiteLLM (AI insight)             │
-                        │    ↓                                        │
-                        │  Activepieces (automation)                  │
-                        │    ↓                                        │
-                        │  Discord / Slack / Telegram                 │
-                        │    ↓                                        │
-                        │  Feedback → future context                  │
-                        └─────────────────────────────────────────────┘
-```
-
-The dashboard (`src/dashboard/`) serves the SPA and acts as an authenticated proxy for service calls. The collector (`src/server.ts`) handles all event ingestion and the AI loop.
+| Service | Port | Purpose |
+|---|---|---|
+| Collector (Fastify/TypeScript) | 3005 | Event ingestion and AI loop |
+| Dashboard (Fastify/TypeScript) | 3006 | 12-page SPA — events, insights, actions, memory, logs |
+| Supabase | 8000 | Structured storage (events, insights, actions, feedback) |
+| Qdrant | 6333 | Vector memory for semantic retrieval |
+| Ollama | 11435 | Local AI models |
+| LiteLLM | 4000 | AI gateway (OpenAI/Anthropic/Gemini/Groq/OpenRouter) |
+| LangGraph | 3010 | Multi-step agent workflows |
+| Activepieces | 8080 | Automation flows triggered by insights |
 
 ---
 
 ## Testing
 
 ```bash
-npm test                  # Run normalizer unit tests
-npm run check             # TypeScript type check
-npm run lint:scripts      # Validate shell scripts
-npm run verify:fresh      # Pre-release sanity check
+npm test          # 65 normalizer unit tests
+npm run check     # TypeScript type check
+npm run doctor    # Full service health check
 ```
-
----
-
-## Documentation
-
-- [Local Stack and Use Cases](docs/local-stack-and-use-cases.md) — one-command stack, curl examples, scenarios
-- [Deployment Modes](docs/deployment-modes.md) — single machine vs modular split-VM
-- [Modular VM Walkthrough](docs/modular-vm-walkthrough.md) — collector, Qdrant, Ollama on separate VMs
-- [Production Deployment](docs/production-deployment.md) — HTTPS, secrets, backups, upgrades
-- [Integration Webhooks](docs/integration-webhooks.md) — connect GlitchTip, Zammad, Uptime Kuma, Umami, Listmonk
-- [AI Provider Modes](docs/ai-provider-modes.md) — local Ollama, LiteLLM gateway, direct OpenAI-compatible, fallback
-- [Activepieces Automation](docs/activepieces.md) — webhook flows, use-case templates
-- [LangGraph Agents](docs/langgraph.md) — multi-step agents for support, incidents, onboarding
-- [AI Loop](docs/ai-loop.md) — how events become insights and how feedback closes the loop
 
 ---
 
 ## Contributing
 
-Contributions are welcome — bug fixes, new integrations, docs improvements, and tests.
+Contributions are welcome — integrations, tests, dashboard improvements, AI prompt tuning, docs.
 
 **Good first issues:**
-- Add a normalizer for a new tool (GitHub, Stripe, Linear, Resend)
-- Add unit tests for edge cases in existing normalizers
-- Improve AI prompts in `src/ollama.ts` for a specific event source
-- Add a dashboard page or improve an existing one
+- Add a normalizer for a new tool (GitHub events, Stripe webhooks, Linear issues, Resend bounces)
+- Write tests for edge cases in existing normalizers
+- Improve AI prompts in `src/ollama.ts` for a specific source
+- Improve dashboard pages
 
-**How to add a new integration:**
+**How to add a new integration — 5 steps:**
 
-1. Write a normalizer in `src/normalizers.ts` — takes raw webhook payload, returns `NormalizedEvent`
-2. Add a route in `src/server.ts` — `app.post("/v1/events/yourtool", ...)`
-3. Add unit tests in `src/normalizers.test.ts`
-4. Add a doc page in `docs/`
-5. Add a demo script in `scripts/`
+1. **Normalizer** — add `normalizeYourTool(payload)` in [`src/normalizers.ts`](src/normalizers.ts). Takes the raw webhook body, returns `NormalizedEvent`. See `normalizeZammad` or `normalizeUptimeKuma` as a reference.
 
-All normalizers follow the same pattern — see `normalizeZammad` or `normalizeUptimeKuma` as references.
+2. **Route** — add `app.post("/v1/events/yourtool", ...)` in [`src/server.ts`](src/server.ts).
+
+3. **Tests** — add a `describe` block in [`src/normalizers.test.ts`](src/normalizers.test.ts) covering the common payload shapes and edge cases.
+
+4. **Doc** — add `docs/yourtool.md` explaining how to set up the webhook on the external service side.
+
+5. **Demo script** — add `scripts/demo-yourtool.sh` with a sample curl.
 
 **Dev setup:**
 
 ```bash
 git clone https://github.com/redu-cloud/redu-os
 cd redu-os
-cp .env.example .env        # Fill in at minimum: COLLECTOR_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+cp .env.example .env
+# Set at minimum: COLLECTOR_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 npm install
-npm run dev                  # Starts collector with hot reload
-npm test                     # Run tests
-npm run check                # TypeScript
+npm run dev        # Collector with hot reload on :3005
+npm test           # Run tests
 ```
 
-To run the full stack locally, follow the [Quick start](#quick-start) section above.
+Please open an issue before starting large changes.
 
-Please open an issue before starting large changes so we can discuss the approach.
+---
+
+## Documentation
+
+| Doc | Contents |
+|---|---|
+| [AI Loop](docs/ai-loop.md) | How events become insights and how feedback closes the loop |
+| [Local Stack and Use Cases](docs/local-stack-and-use-cases.md) | One-command stack, curl examples, service-by-service walkthroughs |
+| [Deployment Modes](docs/deployment-modes.md) | Single machine vs modular split-VM layout |
+| [Production Deployment](docs/production-deployment.md) | HTTPS, secrets, backups, upgrades |
+| [Integration Webhooks](docs/integration-webhooks.md) | Webhook setup for every supported tool |
+| [AI Provider Modes](docs/ai-provider-modes.md) | Ollama, LiteLLM, OpenAI-compatible, fallback |
+| [LangGraph Agents](docs/langgraph.md) | Multi-step agent workflows |
+| [Activepieces Automation](docs/activepieces.md) | Automation flow setup and templates |
 
 ---
 
