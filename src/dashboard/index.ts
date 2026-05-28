@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import rateLimit from "@fastify/rate-limit";
 import { port, langfuseTracingEnabled } from "./config.js";
 import { initGlitchTip, glitchtipScriptTag } from "./glitchtip.js";
 import { registerAuthHook } from "./auth.js";
@@ -6,6 +7,9 @@ import { registerAuthHook } from "./auth.js";
 // Initialise error reporting before anything else so startup errors are captured too
 initGlitchTip();
 import { provisionUmamiWebsite, umamiScriptTag } from "./umami.js";
+import { startUmamiPoller } from "./umami-poller.js";
+import { startGlitchTipPoller } from "./glitchtip-poller.js";
+import { startListmonkPoller } from "./listmonk-poller.js";
 import { register as registerAuthRoutes } from "./routes/auth.js";
 import { register as registerCoreRoutes } from "./routes/core.js";
 import { register as registerEventsRoutes } from "./routes/events.js";
@@ -21,10 +25,14 @@ import { register as registerOnboardingRoutes } from "./routes/onboarding.js";
 import { register as registerTrackRoutes } from "./routes/track.js";
 import { register as registerResetRoutes } from "./routes/reset.js";
 import { register as registerProxiesRoutes } from "./routes/proxies.js";
+import { register as registerUptimeKumaRoutes } from "./routes/uptime-kuma.js";
 import { dashboardHtml } from "./html/spa/index.js";
 import { loginHtml } from "./html/login.js";
 
 const app = Fastify({ logger: true });
+
+// Rate limiting — applied only to public proxy endpoints (global: false)
+await app.register(rateLimit, { global: false });
 
 registerAuthHook(app);
 registerAuthRoutes(app, loginHtml, umamiScriptTag);
@@ -42,6 +50,7 @@ registerOnboardingRoutes(app);
 registerTrackRoutes(app);
 registerResetRoutes(app);
 registerProxiesRoutes(app);
+registerUptimeKumaRoutes(app);
 
 app.get("/", async (_request, reply) => {
   reply.type("text/html");
@@ -55,6 +64,9 @@ console.log(`reduOS dashboard listening on http://127.0.0.1:${port}`);
 
 // Provision Umami tracking website asynchronously — does not block startup
 provisionUmamiWebsite().catch(() => {});
+startUmamiPoller();
+startGlitchTipPoller();
+startListmonkPoller();
 if (langfuseTracingEnabled) {
   console.log("[langfuse] dashboard agent tracing enabled");
 }

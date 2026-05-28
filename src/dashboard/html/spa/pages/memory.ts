@@ -43,6 +43,7 @@ export const pgMemory = `async function pgMemory() {
       el.innerHTML='<div class="page-loading" style="min-height:80px"><div class="spin"></div> Searching…</div>';
       try {
         const d=await api('/api/memory/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q,limit:6})});
+        if(d.disabled){el.innerHTML=empty('&#128190;','Memory not enabled','Set QDRANT_ENABLED=true in .env and restart the collector to enable semantic memory.');return;}
         const items=d.items||[];
         if(!items.length){el.innerHTML=empty('&#128270;','No matches','No similar events found. Try a different query.');return;}
         el.innerHTML=items.map(it=>

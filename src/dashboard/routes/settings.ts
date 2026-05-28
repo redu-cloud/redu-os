@@ -207,4 +207,26 @@ export function register(app: FastifyInstance): void {
         : "not configured"
     };
   });
+
+  app.get("/api/approval-config", async () => {
+    try {
+      const r = await fetch(`${collectorUrl}/internal/config`, { headers: jsonHeaders(collectorApiKey) });
+      if (!r.ok) return { ok: false, require_approval_severity: null };
+      const d = await r.json() as { require_approval_severity?: string | null };
+      return { ok: true, require_approval_severity: d.require_approval_severity ?? null };
+    } catch {
+      return { ok: false, require_approval_severity: null };
+    }
+  });
+
+  app.post("/api/approval-config", async (request) => {
+    const { severity } = request.body as { severity?: string };
+    const res = await fetch(`${collectorUrl}/internal/config`, {
+      method: "POST",
+      headers: jsonHeaders(collectorApiKey),
+      body: JSON.stringify({ require_approval_severity: severity ?? "" })
+    });
+    if (!res.ok) throw new Error("Failed to update approval config");
+    return { ok: true };
+  });
 }

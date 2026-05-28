@@ -1,344 +1,207 @@
 # reduOS
 
-The reduOS app repository contains the collector service, database schema, example requests, and self-hosted deployment templates.
+Self-hosted AI operations layer for startups. It connects your existing tools — error tracking, support, uptime, analytics, email — into one loop that watches for events, generates AI insights, triggers automation, and remembers what worked.
 
-The marketing website lives in the separate `redu-os-website` project.
-
-## Collector
-
-Small event collector for the reduOS AI loop.
-
-It receives events from tools like GlitchTip, Zammad, Uptime Kuma, Umami, Listmonk, Supabase, or custom apps. It normalizes those events into one schema, stores them in Supabase, optionally stores memory in Qdrant, optionally asks Ollama/DeepSeek for analysis, triggers Activepieces when configured, and records action/feedback outcomes.
-
-reduOS learns by building operational memory: it stores events, decisions, actions, and outcomes, then retrieves similar context for future AI analysis.
-
-It does not fine-tune a model automatically. v1 uses operational memory and retrieval.
-
-## Flow
-
-```text
-Event -> Collector -> Supabase -> Qdrant memory -> Ollama analysis -> Activepieces action -> Feedback -> Future context
+```
+Event → Collector → Supabase → Qdrant memory → AI analysis → Activepieces → Notifications → Feedback → Future context
 ```
 
-## Endpoints
+Each time an event is resolved (ticket closed, downtime recovered, error fixed), reduOS records the outcome and links it back to the original event. The next time something similar happens, the AI has that history as context.
 
-All endpoints except `GET /health` require:
+---
 
-```text
-X-API-Key: your-collector-key
-```
+## What it connects
 
-| Endpoint | Purpose |
-| --- | --- |
-| `GET /health` | Service health check |
-| `POST /v1/events` | Receive generic startup events |
-| `POST /v1/events/glitchtip` | Receive GlitchTip webhook payloads |
-| `POST /v1/events/zammad` | Receive Zammad webhook payloads |
-| `POST /v1/events/uptime-kuma` | Receive Uptime Kuma webhook payloads |
-| `POST /v1/events/umami` | Receive Umami-style event payloads |
-| `POST /v1/events/listmonk` | Receive Listmonk-style audience events |
-| `POST /v1/actions` | Record what AI or automation decided to do |
-| `POST /v1/feedback` | Record the outcome after an action |
-| `GET /v1/context/similar` | Retrieve similar previous events, insights, actions, and feedback |
-| `POST /v1/memory/search` | Search Qdrant event memory with a natural-language query |
+| Tool | Events |
+|---|---|
+| **GlitchTip** | Error created, error resolved |
+| **Zammad** | Ticket created, ticket resolved |
+| **Uptime Kuma** | Monitor down, monitor recovered |
+| **Umami** | Page views, custom events |
+| **Listmonk** | Subscriber joined, subscriber churned |
+| **Custom apps** | Any event via the generic `/v1/events` endpoint |
 
-## Schema
+Insights go to **Discord, Slack, or Telegram**. Automation runs through **Activepieces**. Memory lives in **Qdrant**. Everything is stored in **Supabase**.
 
-Run [`sql/schema.sql`](./sql/schema.sql) in the Supabase SQL Editor.
+---
 
-Tables:
+## Dashboard
 
-- `startup_events`
-- `ai_insights`
-- `ai_actions`
-- `ai_feedback`
+A 12-page self-hosted dashboard: events, AI insights, automation actions, memory search, container logs, notification config, AI provider config.
 
-RLS is enabled. The included policies allow the Supabase service role to manage these tables.
+---
 
-## Local development
+## Quick start
+
+Requirements: [Podman](https://podman.io/) and [podman-compose](https://github.com/containers/podman-compose).
 
 ```bash
+git clone https://github.com/redu-cloud/redu-os
+cd redu-os
 cp .env.example .env
 npm install
-npm run dev
+npm run full
 ```
 
-Qdrant and local AI are optional. If `QDRANT_ENABLED=false` and `AI_ENABLED=false`, the collector still stores events and creates fallback insights. For AI, use `AI_PROVIDER=ollama` for local DeepSeek, `AI_PROVIDER=litellm` for a gateway that can route to local or hosted models, `AI_PROVIDER=openai-compatible` for an existing gateway, or `AI_PROVIDER=fallback` for no model calls.
+`npm run full` starts all services (Supabase, Qdrant, Ollama, LiteLLM, LangGraph, Activepieces, collector, dashboard). First run downloads `deepseek-r1:1.5b` and `nomic-embed-text` — takes a few minutes.
 
-## Local Supabase + Qdrant + Ollama + Collector
+Open `http://127.0.0.1:3006` and sign in with `admin@example.com / ChangeMeStrong123!`.
 
-To test the collector, local self-hosted Supabase, Qdrant memory, and local DeepSeek analysis together:
+**Useful commands after boot:**
 
 ```bash
-npm run stack:up
+npm run status           # Check what's running
+npm run doctor           # Health check all services
+npm run demo:full        # End-to-end event → AI → automation demo
+npm run logs             # Tail all logs
+npm run stack:down       # Stop everything
 ```
 
-This downloads the official Supabase self-hosting Docker files into `.local/supabase`, applies the same Podman fixes used by `use-cases/supabase/cloud-init.yaml`, generates local keys, writes `.env` for the collector, applies `sql/schema.sql`, starts Supabase, Qdrant, Ollama, and the collector, pulls the local models, then posts one smoke-test event.
-
-The first run downloads `deepseek-r1:1.5b` and `nomic-embed-text`, so it can take a few minutes.
-
-Useful follow-up commands:
+**Individual modules** (if you don't want the full stack):
 
 ```bash
-npm run doctor
-npm run status
-npm run stack:test
-npm run demo:onboarding
-npm run demo:memory
-npm run logs:collector
-npm run stack:down
+npm run modular:uptime:up      # Uptime Kuma
+npm run modular:glitchtip:up   # GlitchTip error tracking
+npm run modular:zammad:up      # Zammad support
+npm run modular:listmonk:up    # Listmonk email
+npm run modular:umami:up       # Umami analytics
 ```
 
-Default local URLs:
+---
 
-- Collector: `http://127.0.0.1:3005` (`/health` for health check)
-- Supabase API: `http://127.0.0.1:8000`
-- Supabase Studio: `http://127.0.0.1:3000`
-- Qdrant: `http://127.0.0.1:6333`
-- Ollama: `http://127.0.0.1:11435`
+## Configuration
 
-Generated Supabase and Qdrant credentials live in `.local/supabase-local.env`.
+Edit `.env` before starting. The main values:
 
-Supabase stores the structured event/action/feedback records. Qdrant stores vector memory for events in the `redu_os_events` collection. Ollama runs DeepSeek for insight generation and `nomic-embed-text` for embeddings. If the embedding model is temporarily unavailable, the collector can still store memory with deterministic fallback embeddings.
+| Variable | Purpose |
+|---|---|
+| `COLLECTOR_API_KEY` | Secret for all webhook endpoints — change this |
+| `AI_PROVIDER` | `ollama` (local), `litellm` (gateway), `openai-compatible`, `fallback` |
+| `OLLAMA_MODEL` | Local chat model (default: `deepseek-r1:1.5b`) |
+| `DISCORD_WEBHOOK_URL` | Notifications (optional) |
+| `SLACK_WEBHOOK_URL` | Notifications (optional) |
+| `OPENAI_API_KEY` | If you want GPT-4o-mini via LiteLLM |
 
-By default, API responses return clean insight fields and omit the raw Ollama payload. Set `DEBUG_AI_RAW=true` when you want the response to include model internals for debugging.
+AI provider and model can also be changed at runtime from the dashboard (`/#ai-config`) without restarting.
 
-Use `POST /v1/memory/search` or `npm run demo:memory` to search Qdrant memory with natural language.
+---
 
-Use `npm run doctor` to check local tools, ports, containers, APIs, models, Qdrant memory, and Supabase tables.
+## Sending events
 
-Use `npm run status` for a compact container/URL view, and `npm run logs`, `npm run logs:collector`, `npm run logs:ollama`, `npm run logs:qdrant`, or `npm run logs:supabase` when you need logs.
-
-Use `npm run lint:scripts` to validate shell scripts. It runs `bash -n` everywhere and uses `shellcheck` automatically when installed.
-
-Use `npm run verify:fresh` before releases or handoff. It checks the fresh-clone path: required files, documented npm scripts, executable scripts, env examples, compose parsing, TypeScript, and obvious tracked secret leaks.
-
-To test webhook automation without Activepieces, run the local mock receiver:
+All collector endpoints require `X-API-Key: your-collector-key`.
 
 ```bash
-npm run automation:mock
-npm run automation:enable:mock
-npm run demo:onboarding
-```
-
-The collector will POST each event and insight to the mock webhook and record an automatic `ai_actions` row.
-
-To run real Activepieces locally:
-
-```bash
-npm run modular:activepieces:up
-npm run activepieces:setup
-```
-
-`activepieces:setup` creates/signs in the local Activepieces owner, creates and publishes the reduOS webhook flow, writes the webhook URL/key into `.env`, and recreates the collector.
-
-To exercise the prebuilt use-case workflows:
-
-```bash
-npm run demo:full
-npm run demo:glitchtip
-npm run demo:listmonk
-npm run demo:umami
-npm run demo:uptime
-npm run demo:zammad
-```
-
-To use the local demo dashboard:
-
-```bash
-npm run dashboard:auth:setup
-npm run dashboard
-```
-
-Open `http://127.0.0.1:3006` and sign in with the dashboard credentials printed by `npm run dashboard:auth:setup` or `npm run status`. The dashboard uses Supabase Auth, then shows recent events, AI insights, automation actions, service health, memory search, and demo buttons for support, reliability, product, growth, Umami, Uptime Kuma, Listmonk, GlitchTip, and Zammad events.
-
-To reset generated local data, use the guarded reset command:
-
-```bash
-RESET_LOCAL_DATA=true npm run reset:local
-RESET_LOCAL_DATA=true RESET_MODE=all npm run reset:local
-```
-
-`RESET_MODE=data` is the default and keeps downloaded Ollama models. `RESET_MODE=all` also removes Ollama models, generated Supabase files, and generated local secrets.
-
-For a full walkthrough with health checks, curl examples, Supabase inspection, Qdrant inspection, DeepSeek tests, and realistic startup scenarios, see [Local Stack and Use Cases](./docs/local-stack-and-use-cases.md).
-
-The smallest complete tier includes Supabase, Qdrant, Ollama/DeepSeek, and the collector on one machine. The modular tier uses the same collector env vars to point at Supabase, Qdrant, Ollama, or automation services running on other VMs. Use `.env.modular.example` as the starting point for that layout. See [Deployment Modes](./docs/deployment-modes.md).
-
-Modular service commands:
-
-```bash
-npm run modular:local:up
-npm run modular:local:down
-
-npm run modular:collector:up
-npm run modular:qdrant:up
-npm run modular:ollama:up
-npm run modular:activepieces:up
-npm run modular:uptime:up
-npm run modular:umami:up
-npm run modular:glitchtip:up
-npm run modular:listmonk:up
-npm run modular:zammad:up
-npm run modular:langfuse:up
-npm run modular:litellm:up
-npm run modular:langgraph:up
-```
-
-Use `modular:local:up` to run the exact same stack on one machine, but with Supabase, Qdrant, Ollama, and Collector started as separate modules. Individual services also have `:status`, `:logs`, and `:down` variants. See [Modular VM Walkthrough](./docs/modular-vm-walkthrough.md).
-
-## Documentation
-
-- [Local Stack and Use Cases](./docs/local-stack-and-use-cases.md): one-command stack, service checks, curl examples, support/product/error/uptime/analytics scenarios, and troubleshooting.
-- [Deployment Modes](./docs/deployment-modes.md): smallest complete tier, modular split-VM tier, service contracts, network matrix, and rollout guidance.
-- [Modular VM Walkthrough](./docs/modular-vm-walkthrough.md): compose files and commands for running collector, Qdrant, and Ollama on separate VMs.
-- [Production Deployment](./docs/production-deployment.md): DNS, reverse proxy, firewall, secrets, backups, restores, upgrades, monitoring, and smoke tests.
-- [v1 Readiness And Roadmap](./docs/roadmap.md): what is ready for the first published baseline and what comes next.
-- [Integration Webhooks](./docs/integration-webhooks.md): connect GlitchTip, Zammad, Uptime Kuma, Umami, Listmonk, custom apps, and Activepieces.
-- [Activepieces Automation](./docs/activepieces.md): run real Activepieces with PostgreSQL/Redis, create use-case workflows, and connect them to collector webhooks.
-- [Uptime Kuma Monitoring](./docs/uptime-kuma.md): run the optional monitoring module and watch the local/modular stack.
-- [Umami Analytics](./docs/umami.md): run the optional analytics module, create the demo website, and get a tracking snippet.
-- [GlitchTip Errors](./docs/glitchtip.md): run the optional error tracking module and create the demo organization/project.
-- [Listmonk Audience](./docs/listmonk.md): run the optional audience module and create the demo waitlist.
-- [Zammad Support](./docs/zammad.md): run the optional helpdesk module and create the local support admin.
-- [Langfuse AI Observability](./docs/langfuse.md): run local Langfuse and trace collector prompts, model output, latency, and fallback behavior.
-- [LiteLLM AI Gateway](./docs/litellm.md): route collector AI calls to local Ollama or hosted model providers through one OpenAI-compatible gateway.
-- [LangGraph Agents](./docs/langgraph.md): run multi-step agent workflows for support, incidents, onboarding, and product signals.
-- [AI Provider Modes](./docs/ai-provider-modes.md): choose local Ollama, LiteLLM, direct OpenAI-compatible, or fallback mode.
-- [Security](./SECURITY.md): local demo credentials, webhook handling, and production cautions.
-
-## Build
-
-```bash
-npm run build
-npm start
-```
-
-## Podman
-
-```bash
-podman build -t redu-os-collector:latest .
-podman run --rm -p 3005:3005 --env-file .env redu-os-collector:latest
-```
-
-## Event example
-
-```bash
-curl -i -X POST http://127.0.0.1:3005/v1/events \
+curl -X POST http://127.0.0.1:3005/v1/events \
   -H "Content-Type: application/json" \
   -H "X-API-Key: change-me-please" \
   -d '{
     "type": "support.ticket.created",
     "source": "zammad",
     "severity": "medium",
-    "user": {
-      "email": "customer@example.com",
-      "name": "Demo Customer"
-    },
-    "message": "I cannot finish onboarding",
-    "metadata": {
-      "ticket_id": "123"
-    }
+    "message": "User cannot complete onboarding",
+    "user": { "email": "user@example.com" },
+    "metadata": { "ticket_id": "42" }
   }'
 ```
 
-Response includes:
+Response includes the stored event ID, AI insight, automation result, and memory status.
 
-```json
-{
-  "ok": true,
-  "event_id": "uuid",
-  "insight_id": "uuid",
-  "action_id": "uuid-or-null",
-  "memory": {},
-  "automation": {},
-  "insight": {}
-}
+See [docs/integration-webhooks.md](docs/integration-webhooks.md) for webhook setup per tool and [examples/](examples/) for more curl examples.
+
+---
+
+## Architecture
+
+```
+                        ┌─────────────────────────────────────────────┐
+                        │                 reduOS                      │
+                        │                                             │
+  GlitchTip ──────────► │  Collector (Fastify/TS)                    │
+  Zammad ──────────────► │    normalizers.ts                          │
+  Uptime Kuma ─────────► │    ↓                                       │
+  Umami ───────────────► │  Supabase (startup_events,                 │
+  Listmonk ────────────► │           ai_insights, ai_actions,         │
+  Custom apps ─────────► │           ai_feedback)                     │
+                        │    ↓                                        │
+                        │  Qdrant (vector memory)                     │
+                        │    ↓                                        │
+                        │  Ollama / LiteLLM (AI insight)             │
+                        │    ↓                                        │
+                        │  Activepieces (automation)                  │
+                        │    ↓                                        │
+                        │  Discord / Slack / Telegram                 │
+                        │    ↓                                        │
+                        │  Feedback → future context                  │
+                        └─────────────────────────────────────────────┘
 ```
 
-## Action example
+The dashboard (`src/dashboard/`) serves the SPA and acts as an authenticated proxy for service calls. The collector (`src/server.ts`) handles all event ingestion and the AI loop.
+
+---
+
+## Testing
 
 ```bash
-curl -i -X POST http://127.0.0.1:3005/v1/actions \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: change-me-please" \
-  -d '{
-    "startup_event_id": "event-uuid",
-    "ai_insight_id": "insight-uuid",
-    "action_type": "create_support_task",
-    "status": "completed",
-    "target": "activepieces",
-    "payload": {
-      "task": "Send onboarding checklist"
-    },
-    "result": {
-      "task_created": true
-    }
-  }'
+npm test                  # Run normalizer unit tests
+npm run check             # TypeScript type check
+npm run lint:scripts      # Validate shell scripts
+npm run verify:fresh      # Pre-release sanity check
 ```
 
-## Feedback example
+---
+
+## Documentation
+
+- [Local Stack and Use Cases](docs/local-stack-and-use-cases.md) — one-command stack, curl examples, scenarios
+- [Deployment Modes](docs/deployment-modes.md) — single machine vs modular split-VM
+- [Modular VM Walkthrough](docs/modular-vm-walkthrough.md) — collector, Qdrant, Ollama on separate VMs
+- [Production Deployment](docs/production-deployment.md) — HTTPS, secrets, backups, upgrades
+- [Integration Webhooks](docs/integration-webhooks.md) — connect GlitchTip, Zammad, Uptime Kuma, Umami, Listmonk
+- [AI Provider Modes](docs/ai-provider-modes.md) — local Ollama, LiteLLM gateway, direct OpenAI-compatible, fallback
+- [Activepieces Automation](docs/activepieces.md) — webhook flows, use-case templates
+- [LangGraph Agents](docs/langgraph.md) — multi-step agents for support, incidents, onboarding
+- [AI Loop](docs/ai-loop.md) — how events become insights and how feedback closes the loop
+
+---
+
+## Contributing
+
+Contributions are welcome — bug fixes, new integrations, docs improvements, and tests.
+
+**Good first issues:**
+- Add a normalizer for a new tool (GitHub, Stripe, Linear, Resend)
+- Add unit tests for edge cases in existing normalizers
+- Improve AI prompts in `src/ollama.ts` for a specific event source
+- Add a dashboard page or improve an existing one
+
+**How to add a new integration:**
+
+1. Write a normalizer in `src/normalizers.ts` — takes raw webhook payload, returns `NormalizedEvent`
+2. Add a route in `src/server.ts` — `app.post("/v1/events/yourtool", ...)`
+3. Add unit tests in `src/normalizers.test.ts`
+4. Add a doc page in `docs/`
+5. Add a demo script in `scripts/`
+
+All normalizers follow the same pattern — see `normalizeZammad` or `normalizeUptimeKuma` as references.
+
+**Dev setup:**
 
 ```bash
-curl -i -X POST http://127.0.0.1:3005/v1/feedback \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: change-me-please" \
-  -d '{
-    "startup_event_id": "event-uuid",
-    "ai_action_id": "action-uuid",
-    "feedback_type": "ticket_resolved",
-    "score": 1,
-    "result": "resolved",
-    "metadata": {
-      "resolution_time_minutes": 42,
-      "ai_recommendation_used": true
-    }
-  }'
+git clone https://github.com/redu-cloud/redu-os
+cd redu-os
+cp .env.example .env        # Fill in at minimum: COLLECTOR_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+npm install
+npm run dev                  # Starts collector with hot reload
+npm test                     # Run tests
+npm run check                # TypeScript
 ```
 
-## Similar context
+To run the full stack locally, follow the [Quick start](#quick-start) section above.
 
-For v1, this endpoint uses Supabase only. It does not require Qdrant.
+Please open an issue before starting large changes so we can discuss the approach.
 
-```bash
-curl -sS "http://127.0.0.1:3005/v1/context/similar?type=support.ticket.created&source=zammad&limit=5" \
-  -H "X-API-Key: change-me-please"
-```
+---
 
-Response:
+## License
 
-```json
-{
-  "ok": true,
-  "items": [
-    {
-      "event": {},
-      "insights": [],
-      "actions": [],
-      "feedback": []
-    }
-  ]
-}
-```
-
-## Example scripts
-
-```bash
-./examples/curl-generic.sh
-./examples/curl-action.sh
-./examples/curl-feedback.sh
-./examples/curl-context-similar.sh
-./examples/curl-support-loop.sh
-```
-
-`curl-support-loop.sh` requires `jq`. It sends a support ticket event, records an action, records feedback, and queries similar context.
-
-## Production notes
-
-For production:
-
-- use HTTPS in front of this service
-- use a strong `COLLECTOR_API_KEY`
-- keep `SUPABASE_SERVICE_ROLE_KEY` private
-- deploy on a private network with Supabase/Qdrant/Ollama
-- add rate limits at the proxy layer
+Apache 2.0 — see [LICENSE](LICENSE).

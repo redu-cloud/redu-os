@@ -57,14 +57,25 @@ run_setup() {
     -e KUMA_ADMIN_USERNAME="$KUMA_ADMIN_USERNAME" \
     -e KUMA_ADMIN_PASSWORD="$KUMA_ADMIN_PASSWORD" \
     -e KUMA_CREATE_MONITORS="$KUMA_CREATE_MONITORS" \
-    -e COLLECTOR_PORT="${COLLECTOR_PORT:-3005}" \
+    -e COLLECTOR_PORT="${PORT:-3005}" \
     -e DASHBOARD_PORT="${DASHBOARD_PORT:-3006}" \
     -e SUPABASE_KONG_HTTP_PORT="${SUPABASE_KONG_HTTP_PORT:-8000}" \
+    -e SUPABASE_STUDIO_PORT="${SUPABASE_STUDIO_PORT:-3000}" \
     -e QDRANT_REST_PORT="${QDRANT_REST_PORT:-6333}" \
     -e OLLAMA_PORT="${OLLAMA_PORT:-11435}" \
+    -e LITELLM_PORT="${LITELLM_PORT:-4000}" \
+    -e LANGGRAPH_PORT="${LANGGRAPH_PORT:-3010}" \
     -e ACTIVEPIECES_PORT="${ACTIVEPIECES_PORT:-8080}" \
+    -e UMAMI_PORT="${UMAMI_PORT:-3002}" \
+    -e GLITCHTIP_PORT="${GLITCHTIP_PORT:-8001}" \
+    -e LISTMONK_PORT="${LISTMONK_PORT:-9000}" \
+    -e ZAMMAD_PORT="${ZAMMAD_PORT:-8081}" \
+    -e LANGFUSE_PORT="${LANGFUSE_PORT:-3007}" \
     -e ANON_KEY="${ANON_KEY:-}" \
     -e QDRANT_API_KEY="${QDRANT_API_KEY:-}" \
+    -e LANGGRAPH_API_KEY="${LANGGRAPH_API_KEY:-}" \
+    -e LITELLM_MASTER_KEY="${LITELLM_MASTER_KEY:-}" \
+    -e COLLECTOR_API_KEY="${COLLECTOR_API_KEY:-}" \
     redu-os-uptime-kuma \
     node <<'NODE'
 const { io } = require("socket.io-client");
@@ -179,6 +190,10 @@ function defaultMonitors() {
       headers: process.env.ANON_KEY ? { apikey: process.env.ANON_KEY } : undefined
     },
     {
+      name: "Supabase Studio",
+      url: `http://${host}:${process.env.SUPABASE_STUDIO_PORT || "3000"}`
+    },
+    {
       name: "Qdrant",
       url: `http://${host}:${process.env.QDRANT_REST_PORT || "6333"}/collections`,
       headers: process.env.QDRANT_API_KEY ? { "api-key": process.env.QDRANT_API_KEY } : undefined
@@ -188,8 +203,38 @@ function defaultMonitors() {
       url: `http://${host}:${process.env.OLLAMA_PORT || "11435"}/api/tags`
     },
     {
+      name: "LiteLLM",
+      url: `http://${host}:${process.env.LITELLM_PORT || "4000"}/health`,
+      headers: process.env.LITELLM_MASTER_KEY ? { Authorization: `Bearer ${process.env.LITELLM_MASTER_KEY}` } : undefined
+    },
+    {
+      name: "LangGraph",
+      url: `http://${host}:${process.env.LANGGRAPH_PORT || "3010"}/health`,
+      headers: process.env.LANGGRAPH_API_KEY ? { "x-api-key": process.env.LANGGRAPH_API_KEY } : undefined
+    },
+    {
       name: "Activepieces",
       url: `http://${host}:${process.env.ACTIVEPIECES_PORT || "8080"}`
+    },
+    {
+      name: "Umami",
+      url: `http://${host}:${process.env.UMAMI_PORT || "3002"}/api/heartbeat`
+    },
+    {
+      name: "GlitchTip",
+      url: `http://${host}:${process.env.GLITCHTIP_PORT || "8001"}/api/0/`
+    },
+    {
+      name: "Listmonk",
+      url: `http://${host}:${process.env.LISTMONK_PORT || "9000"}/`
+    },
+    {
+      name: "Zammad",
+      url: `http://${host}:${process.env.ZAMMAD_PORT || "8081"}`
+    },
+    {
+      name: "Langfuse",
+      url: `http://${host}:${process.env.LANGFUSE_PORT || "3007"}/api/public/health`
     }
   ];
 
@@ -201,11 +246,46 @@ function defaultMonitors() {
   }));
 }
 
-async function ensureMonitors(socket) {
+async function ensureWebhookNotification(socket, notificationList) {
+  const collectorPort = process.env.COLLECTOR_PORT || "3005";
+  const webhookUrl = `http://host.containers.internal:${collectorPort}/v1/events/uptime-kuma`;
+  const notifName = "reduOS Collector";
+
+  const existingList = Object.values(notificationList || {});
+  const found = existingList.find((n) => n.name === notifName);
+  if (found) {
+    console.log(`Notification already exists: ${notifName} (id=${found.id})`);
+    return found.id;
+  }
+
+  const apiKey = process.env.COLLECTOR_API_KEY || "";
+  const headers = apiKey ? JSON.stringify({ "X-API-Key": apiKey }) : "{}";
+
+  const response = await emitAsync(socket, "addNotification", {
+    name: notifName,
+    type: "webhook",
+    isDefault: true,
+    applyExisting: true,
+    webhookURL: webhookUrl,
+    webhookContentType: "json",
+    webhookAdditionalHeaders: headers
+  }, null);
+
+  if (!response || response.ok !== true) {
+    throw new Error(`Could not create notification: ${response && response.msg ? response.msg : JSON.stringify(response)}`);
+  }
+
+  console.log(`Created webhook notification: ${notifName} → ${webhookUrl}`);
+  return response.id;
+}
+
+async function ensureMonitors(socket, notificationList) {
   if (!createMonitors) {
     console.log("Uptime Kuma default monitor creation is disabled.");
     return;
   }
+
+  const notifId = await ensureWebhookNotification(socket, notificationList);
 
   const existing = await getMonitorList(socket);
   const existingNames = new Set(Object.values(existing || {}).map((monitor) => monitor.name));
@@ -219,7 +299,12 @@ async function ensureMonitors(socket) {
       continue;
     }
 
-    const response = await emitAsync(socket, "add", monitor);
+    const monitorWithNotif = {
+      ...monitor,
+      notificationIDList: notifId ? { [notifId]: true } : {}
+    };
+
+    const response = await emitAsync(socket, "add", monitorWithNotif);
     if (!response || response.ok !== true) {
       throw new Error(`Could not create monitor ${monitor.name}: ${response && response.msg ? response.msg : JSON.stringify(response)}`);
     }
@@ -258,10 +343,14 @@ async function main() {
       throw new Error(`Uptime Kuma setup failed: ${setup && setup.msg ? setup.msg : JSON.stringify(setup)}`);
     }
     console.log("Uptime Kuma owner account created.");
-    await ensureMonitors(socket);
+    // Fresh install: no existing notifications
+    await ensureMonitors(socket, {});
     socket.close();
     return;
   }
+
+  // Capture notificationList emitted automatically during login broadcast
+  const notificationListPromise = waitForEvent(socket, "notificationList");
 
   const login = await emitAsync(socket, "login", {
     username,
@@ -276,8 +365,10 @@ async function main() {
     );
   }
 
+  const notificationList = await notificationListPromise;
+
   console.log("Uptime Kuma owner account is ready.");
-  await ensureMonitors(socket);
+  await ensureMonitors(socket, notificationList);
   socket.close();
 }
 

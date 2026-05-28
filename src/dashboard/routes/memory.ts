@@ -13,7 +13,11 @@ export function register(app: FastifyInstance): void {
       })
     });
 
+    const data = await response.json() as { ok?: boolean; reason?: string; items?: unknown[] };
+    if (data.reason === "qdrant_disabled") {
+      return { ok: true, items: [], disabled: true };
+    }
     reply.status(response.status);
-    return response.json();
+    return data;
   });
 }

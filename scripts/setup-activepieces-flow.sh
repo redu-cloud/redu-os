@@ -274,6 +274,8 @@ exports.code = async (inputs) => {
     flow_key: flowKey,
     flow_title: title,
     event_id: event.id,
+    action_id: body.action_id || null,
+    callback_url: body.callback_url || null,
     event_type: type,
     source,
     severity,
@@ -349,6 +351,8 @@ exports.code = async (inputs) => {
     flow_key: item.flow_key,
     flow_title: item.flow_title,
     event_id: item.event_id,
+    action_id: item.action_id || null,
+    callback_url: item.callback_url || null,
     event_type: item.event_type,
     priority: item.priority,
     category: item.category,
@@ -457,7 +461,68 @@ EOF_CODE
       }
     }' > "${dir}/04-discord.json"
 
-  cat > "${dir}/05-publish.json" <<'EOF'
+  cat > "${dir}/report-callback.js" <<EOF_CODE
+exports.code = async (inputs) => {
+  const COLLECTOR_API_KEY = '${COLLECTOR_API_KEY}';
+  const result = inputs.result;
+  if (!result || result.skipped || !result.callback_url) {
+    return { ok: true, skipped: true };
+  }
+
+  try {
+    const response = await fetch(result.callback_url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(COLLECTOR_API_KEY ? {'X-API-Key': COLLECTOR_API_KEY} : {})
+      },
+      body: JSON.stringify({
+        event_id: result.event_id,
+        action_id: result.action_id || null,
+        action_taken: 'activepieces_flow_completed',
+        outcome: 'completed',
+        metadata: {
+          flow_key: result.flow_key,
+          flow_title: result.flow_title,
+          discord_sent: result.discord_sent || false
+        }
+      })
+    });
+    return { ok: response.ok, status: response.status };
+  } catch (error) {
+    return { ok: false, error: String(error && error.message ? error.message : error) };
+  }
+};
+EOF_CODE
+# end report-callback.js
+
+  local callback_code
+  callback_code="$(cat "${dir}/report-callback.js")"
+
+  jq -n \
+    --arg code "$callback_code" \
+    '{
+      type: "ADD_ACTION",
+      request: {
+        parentStep: "send_discord_notification",
+        action: {
+          name: "report_to_collector",
+          valid: true,
+          displayName: "Report Result to Collector",
+          type: "CODE",
+          settings: {
+            sourceCode: {packageJson: "{}", code: $code},
+            input: {result: "{{send_discord_notification}}"},
+            errorHandlingOptions: {
+              retryOnFailure: {value: false},
+              continueOnFailure: {value: true}
+            }
+          }
+        }
+      }
+    }' > "${dir}/05-callback.json"
+
+  cat > "${dir}/06-publish.json" <<'EOF'
 {
   "type": "LOCK_AND_PUBLISH",
   "request": {}
@@ -506,7 +571,8 @@ ensure_flow() {
   ap_operation "$flow_id" "${work_dir}/02-filter.json"
   ap_operation "$flow_id" "${work_dir}/03-message.json"
   ap_operation "$flow_id" "${work_dir}/04-discord.json"
-  ap_operation "$flow_id" "${work_dir}/05-publish.json"
+  ap_operation "$flow_id" "${work_dir}/05-callback.json"
+  ap_operation "$flow_id" "${work_dir}/06-publish.json"
   rm -rf "$work_dir"
 
   FLOW_IDS+=("$flow_id")

@@ -21,26 +21,20 @@ export function register(app: FastifyInstance): void {
       .send();
   });
 
-  app.post("/api/track", async (request, reply) => {
+  app.post("/api/track", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
     reply.header("Access-Control-Allow-Origin", "*");
 
     const body = request.body as Record<string, unknown> ?? {};
     // Default source to "website" if not set
     if (!body.source) body.source = "website";
 
-    try {
-      const res = await fetch(`${collectorUrl}/v1/events`, {
-        method:  "POST",
-        headers: jsonHeaders(collectorApiKey),
-        body:    JSON.stringify(body),
-        signal:  AbortSignal.timeout(6_000)
-      });
-      const data = await res.json();
-      reply.status(res.status);
-      return data;
-    } catch {
-      reply.status(502);
-      return { ok: false, error: "collector_unreachable" };
-    }
+    // Fire-and-forget: the full AI loop takes ~15s; the browser doesn't need to wait.
+    fetch(`${collectorUrl}/v1/events`, {
+      method:  "POST",
+      headers: jsonHeaders(collectorApiKey),
+      body:    JSON.stringify(body),
+    }).catch(() => {});
+
+    return { ok: true };
   });
 }

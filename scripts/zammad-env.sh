@@ -114,7 +114,7 @@ if [ ! -f .env ]; then
   cp .env.dist .env
 fi
 
-set_env "${ZAMMAD_DIR}/.env" "NGINX_PORT" "${ZAMMAD_PORT:-8081}"
+set_env "${ZAMMAD_DIR}/.env" "NGINX_PORT" "8080"
 set_env "${ZAMMAD_DIR}/.env" "NGINX_EXPOSE_PORT" "${ZAMMAD_PORT:-8081}"
 set_env "${ZAMMAD_DIR}/.env" "ZAMMAD_HTTP_TYPE" "${ZAMMAD_HTTP_TYPE:-http}"
 set_env "${ZAMMAD_DIR}/.env" "ZAMMAD_FQDN" "${ZAMMAD_FQDN:-localhost}"

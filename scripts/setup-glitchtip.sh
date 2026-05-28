@@ -244,3 +244,64 @@ echo "  Password: ${GLITCHTIP_ADMIN_PASSWORD:-ChangeMeStrong123!}"
 echo "  Organization: ${GLITCHTIP_ORG_NAME:-reduOS}"
 echo "  Team: ${GLITCHTIP_TEAM_NAME:-Default-Team}"
 echo "  Project: ${GLITCHTIP_PROJECT_NAME:-AI-OS-Demo}"
+
+# ── Provision reduOS collector API token + alert webhook ─────────────────────
+
+COLLECTOR_API_KEY="$(grep '^COLLECTOR_API_KEY=' "$ENV_FILE" | cut -d= -f2-)"
+COLLECTOR_PORT="$(grep '^COLLECTOR_PORT=' "$ENV_FILE" | cut -d= -f2- || echo "3005")"
+
+echo "Provisioning GlitchTip API token and alert webhook..."
+API_TOKEN="$(podman exec -i \
+  -e GLITCHTIP_ADMIN_EMAIL="${GLITCHTIP_ADMIN_EMAIL:-admin@example.com}" \
+  -e COLLECTOR_API_KEY="$COLLECTOR_API_KEY" \
+  -e COLLECTOR_PORT="$COLLECTOR_PORT" \
+  redu-os-glitchtip \
+  python manage.py shell <<'PY'
+import os
+from django.contrib.auth import get_user_model
+from apps.api_tokens.models import APIToken
+from apps.alerts.models import ProjectAlert, AlertRecipient
+from apps.alerts.constants import RecipientType
+from apps.projects.models import Project
+
+User = get_user_model()
+u = User.objects.get(email=os.environ["GLITCHTIP_ADMIN_EMAIL"])
+
+# Create or reuse a read-scoped API token for the poller
+t, _ = APIToken.objects.get_or_create(user=u, label="reduOS poller")
+t.add_permissions(["org:read", "event:read", "project:read"])
+print("TOKEN:", t.token)
+
+# Provision alert webhook — fires on every new issue
+collector_url = "http://host.containers.internal:{}/v1/events/glitchtip?key={}".format(
+    os.environ.get("COLLECTOR_PORT", "3005"),
+    os.environ.get("COLLECTOR_API_KEY", ""),
+)
+for project in Project.objects.all():
+    alert, _ = ProjectAlert.objects.get_or_create(
+        project=project,
+        defaults={"name": "reduOS Alert", "quantity": 1, "timespan_minutes": 1}
+    )
+    AlertRecipient.objects.get_or_create(
+        alert=alert,
+        recipient_type=RecipientType.GENERAL_WEBHOOK,
+        url=collector_url,
+    )
+print("ALERTS_DONE")
+PY
+)"
+
+# Extract just the token value
+GLITCHTIP_API_TOKEN="$(echo "$API_TOKEN" | grep '^TOKEN:' | cut -d' ' -f2-)"
+
+if [ -n "$GLITCHTIP_API_TOKEN" ]; then
+  # Write/update GLITCHTIP_API_TOKEN in .env (idempotent)
+  if grep -q "^GLITCHTIP_API_TOKEN=" "$ENV_FILE"; then
+    sed -i "s|^GLITCHTIP_API_TOKEN=.*|GLITCHTIP_API_TOKEN=${GLITCHTIP_API_TOKEN}|" "$ENV_FILE"
+  else
+    echo "GLITCHTIP_API_TOKEN=${GLITCHTIP_API_TOKEN}" >> "$ENV_FILE"
+  fi
+  echo "  API token written to .env (GLITCHTIP_API_TOKEN)"
+else
+  echo "  WARNING: Could not provision API token"
+fi

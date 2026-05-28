@@ -49,8 +49,70 @@ export function normalizeGeneric(payload: unknown): NormalizedEvent {
   };
 }
 
+function topAppFrame(exception: Record<string, unknown>): Record<string, unknown> | null {
+  const stacktrace = asRecord(exception.stacktrace);
+  const frames = Array.isArray(stacktrace.frames) ? stacktrace.frames.map(asRecord) : [];
+  const appFrames = frames.filter(f => {
+    const fn = asString(f.filename) ?? asString(f.abs_path) ?? "";
+    return fn && !fn.includes("node_modules") && !fn.startsWith("internal/") && !fn.startsWith("node:");
+  });
+  return appFrames[appFrames.length - 1] ?? frames[frames.length - 1] ?? null;
+}
+
+function extractGlitchTipIssueId(url: string | undefined): string | null {
+  if (!url) return null;
+  const m = url.match(/\/issues\/(\d+)\//);
+  return m?.[1] ?? null;
+}
+
 export function normalizeGlitchTip(payload: unknown): NormalizedEvent {
   const p = asRecord(payload);
+
+  // Slack-compatible webhook format sent by GlitchTip's alert system
+  // Detected by presence of `attachments` array without a Sentry `event` envelope
+  if (Array.isArray(p.attachments) && !p.event) {
+    const att = asRecord(p.attachments[0]);
+    const titleLink = asString(att.title_link);
+    const issueId = extractGlitchTipIssueId(titleLink);
+    const title = asString(att.title) ?? asString(p.text) ?? "GlitchTip alert";
+    const culprit = asString(att.text);
+    const fields = Array.isArray(att.fields) ? att.fields.map(asRecord) : [];
+    const projectField = fields.find(f => asString(f.title)?.toLowerCase() === "project");
+    const project = asString(projectField?.value) ?? "unknown-project";
+    // Split "ExceptionType: message" title into type + value
+    const colonIdx = title.indexOf(": ");
+    const exceptionType  = colonIdx > 0 ? title.slice(0, colonIdx) : null;
+    const exceptionValue = colonIdx > 0 ? title.slice(colonIdx + 2) : title;
+
+    return {
+      type: "error.created",
+      source: "glitchtip",
+      severity: "high",
+      user_email: null,
+      user_name: null,
+      message: truncate(title),
+      metadata: {
+        project,
+        level: "error",
+        exception_type: exceptionType,
+        exception_value: exceptionValue,
+        stack_top: null,
+        transaction: culprit,
+        url: null,
+        method: null,
+        culprit,
+        glitchtip_issue_id: issueId,
+        event_id: issueId ? `issue-${issueId}` : null,
+        release: null,
+        environment: null,
+        platform: null,
+        tags: null,
+        fingerprint: null,
+        raw: p
+      }
+    };
+  }
+
   const event = asRecord(p.event);
   const projectPayload = asRecord(p.project);
   const user = {
@@ -87,6 +149,18 @@ export function normalizeGlitchTip(payload: unknown): NormalizedEvent {
     transaction ||
     "GlitchTip event received";
 
+  const top = topAppFrame(exception);
+  const stackTop = top ? {
+    file: asString(top.filename) ?? asString(top.abs_path),
+    line: top.lineno,
+    fn:   asString(top.function),
+    context: asString(top.context_line),
+  } : null;
+
+  // Some Sentry-protocol payloads include the GlitchTip issue URL in tags or links
+  const issueUrl = asString(p.issue_url) ?? asString(event.issue_url);
+  const glitchtipIssueId = extractGlitchTipIssueId(issueUrl);
+
   return {
     type: "error.created",
     source: "glitchtip",
@@ -99,6 +173,8 @@ export function normalizeGlitchTip(payload: unknown): NormalizedEvent {
       level,
       exception_type: exception.type,
       exception_value: exception.value,
+      stack_top: stackTop,
+      glitchtip_issue_id: glitchtipIssueId,
       transaction,
       url: request.url,
       method: request.method,
@@ -117,24 +193,35 @@ export function normalizeGlitchTip(payload: unknown): NormalizedEvent {
 export function normalizeZammad(payload: unknown): NormalizedEvent {
   const p = asRecord(payload);
   const ticket = asRecord(p.ticket);
-  const customer = asRecord(p.customer);
+  // Webhook payload nests customer under ticket.customer; direct posts may use top-level
+  const customer = {
+    ...asRecord(ticket.customer),
+    ...asRecord(p.customer),
+  };
   const article = asRecord(p.article);
 
   const title = asString(ticket.title) ?? asString(p.title) ?? "Support ticket";
   const body = asString(article.body) ?? asString(p.message) ?? "";
   const priority = ticket.priority ?? p.priority ?? ticket.priority_id;
+  const state = asString(ticket.state) ?? asString(p.state_name) ?? "";
+  const isResolved = ["closed", "merged", "solved"].includes(state.toLowerCase());
+
+  const userEmail = asString(customer.email) ?? asString(p.customer_email) ?? asString(p.email) ?? null;
+  const userName = asString(customer.firstname)
+    ? [asString(customer.firstname), asString(customer.lastname)].filter(Boolean).join(" ")
+    : asString(customer.name) ?? asString(p.customer_name) ?? asString(p.name) ?? null;
 
   return {
-    type: "support.ticket.created",
+    type: isResolved ? "support.ticket.resolved" : "support.ticket.created",
     source: "zammad",
     severity: severityFrom(priority, "medium"),
-    user_email: asString(customer.email) ?? asString(p.customer_email) ?? asString(p.email) ?? null,
-    user_name: asString(customer.name) ?? asString(p.customer_name) ?? asString(p.name) ?? null,
+    user_email: userEmail,
+    user_name: userName || null,
     message: truncate(body ? `${title}\n\n${body}` : title),
     metadata: {
       ticket_id: ticket.id ?? p.ticket_id,
       ticket_title: title,
-      ticket_state: ticket.state,
+      ticket_state: state || ticket.state,
       article_id: article.id,
       priority,
       raw: p

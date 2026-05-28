@@ -49,6 +49,70 @@ The setup command prints a snippet like:
 
 Add that to a site or app page to collect analytics in Umami.
 
+## AI Loop Integration
+
+When the dashboard is running, it automatically polls Umami every 30 seconds and forwards new custom events into the reduOS AI loop. No extra code is required on your website — the Umami script tag is enough.
+
+### What gets forwarded
+
+Only custom events (`umami.track()` calls, `eventType === 2`) are forwarded. Automatic pageviews are excluded to avoid noise.
+
+### Installation
+
+Add the snippet to any page:
+
+```html
+<script async defer
+  src="http://127.0.0.1:3002/script.js"
+  data-website-id="YOUR_WEBSITE_ID"
+></script>
+```
+
+Then track events normally:
+
+```javascript
+umami.track('signup',   { plan: 'pro' });
+umami.track('purchase', { amount: 49, plan: 'pro' });
+umami.track('contact-form', { status: 'submitted' });
+```
+
+### What happens
+
+```
+umami.track('purchase', { amount: 49 })
+        │
+        ▼
+   Umami stores it in its Postgres DB
+        │
+        ▼  (up to 30 s later)
+   Dashboard poller picks it up
+        │
+        ▼
+   POST /v1/events  { source: "umami", type: "purchase", severity: "high" }
+        │
+        ▼
+   Supabase  →  Qdrant embed  →  similar-event recall  →  LLM insight
+        │
+        ▼
+   Activepieces automation  →  Discord / Slack / Telegram notification
+```
+
+### Severity mapping
+
+| Event name contains | Severity |
+|---|---|
+| `purchase`, `payment`, `checkout`, `upgrade`, `revenue` | `high` |
+| `signup`, `register`, `subscribe`, `plan`, `contact`, `lead`, `trial` | `medium` |
+| anything else | `info` |
+
+### Deduplication
+
+The poller tracks forwarded event IDs in memory. An event is never forwarded twice within the same dashboard session, even with the 10-second overlap window used to handle clock skew.
+
+### Viewing results
+
+Events forwarded from Umami appear in the dashboard Events page with `source: umami`. AI insights and automation actions are generated the same way as any other event.
+
 ## Send A reduOS Test Event
 
 The collector already understands Umami-style analytics payloads:

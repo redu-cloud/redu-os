@@ -20,31 +20,49 @@ export const pgIntegrations = `async function pgIntegrations() {
         });
       };
 
-      /* ── Protected API key reveal / copy ── */
-      window.revealKey = function() {
-        const el = document.getElementById('apik-val');
-        const btn = document.getElementById('apik-reveal');
+      /* ── Generic reveal / copy for masked credential cards ── */
+      window.revealSecret = function(id, secret) {
+        const el  = document.getElementById(id+'-val');
+        const btn = document.getElementById(id+'-reveal');
         if (!el || !btn) return;
         const hidden = el.getAttribute('data-hidden') === '1';
         if (hidden) {
-          el.textContent = apiKey;
+          el.textContent = secret;
           el.setAttribute('data-hidden', '0');
           btn.textContent = 'Hide';
         } else {
-          el.textContent = '\\u2022'.repeat(Math.min(apiKey.length, 32));
+          el.textContent = '\\u2022'.repeat(Math.min(secret.length, 40));
           el.setAttribute('data-hidden', '1');
           btn.textContent = 'Reveal';
         }
       };
-      window.copyKey = function() {
-        navigator.clipboard.writeText(apiKey).catch(function(){});
-        const btn = document.getElementById('apik-copy');
+      window.copySecret = function(id, secret) {
+        navigator.clipboard.writeText(secret).catch(function(){});
+        const btn = document.getElementById(id+'-copy');
         if (!btn) return;
         const orig = btn.textContent;
         btn.textContent = '\\u2713 Copied';
         btn.style.color = 'var(--green)';
         setTimeout(function(){ btn.textContent = orig; btn.style.color = ''; }, 2000);
       };
+      /* Legacy single-key helpers kept for backward compat */
+      window.revealKey = function() { window.revealSecret('apik', apiKey); };
+      window.copyKey   = function() { window.copySecret('apik', apiKey); };
+
+      function secretCard(id, label, note, secret) {
+        const masked = '\\u2022'.repeat(Math.min(secret.length, 40));
+        return '<div class="int-key-card">'+
+          '<div class="int-key-card-info">'+
+            '<div class="int-key-card-label">'+esc(label)+'</div>'+
+            '<div class="int-key-card-note">'+note+'</div>'+
+          '</div>'+
+          '<div class="int-key-card-row">'+
+            '<code class="int-key-val" id="'+id+'-val" data-hidden="1">'+esc(masked)+'</code>'+
+            '<button class="btn btn-sm" id="'+id+'-reveal" onclick="revealSecret(&apos;'+id+'&apos;,&apos;'+esc(secret)+'&apos;)">Reveal</button>'+
+            '<button class="btn btn-sm" id="'+id+'-copy"  onclick="copySecret(&apos;'+id+'&apos;,&apos;'+esc(secret)+'&apos;)">Copy</button>'+
+          '</div>'+
+        '</div>';
+      }
 
       /* ── Single-language snippet ── */
       function snippet(lang, code) {
@@ -211,7 +229,23 @@ export const pgIntegrations = `async function pgIntegrations() {
           desc:'Forward monitor alerts from Uptime Kuma. Open your monitor &#8594; Edit &#8594; Notifications &#8594; Add Notification (Webhook type).',
           setup:
             webhookSnippet('/v1/events/uptime-kuma') +
-            keyNote('In Uptime Kuma set the Webhook URL above. Under &ldquo;Additional Headers&rdquo; add:')
+            keyNote('In Uptime Kuma set the Webhook URL above. Under &ldquo;Additional Headers&rdquo; add:') +
+            snippetSection('Add a monitor from here →') +
+            '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-top:4px">'+
+              '<div><div style="font-size:11px;color:var(--muted);margin-bottom:4px">Name</div>'+
+                '<input id="uk-name" class="lg-input" style="width:160px" placeholder="My Homepage"/></div>'+
+              '<div style="flex:1;min-width:180px"><div style="font-size:11px;color:var(--muted);margin-bottom:4px">URL</div>'+
+                '<input id="uk-url" class="lg-input" placeholder="https://example.com"/></div>'+
+              '<div><div style="font-size:11px;color:var(--muted);margin-bottom:4px">Check every</div>'+
+                '<select id="uk-interval" class="lg-select" style="width:120px">'+
+                  '<option value="30">30 seconds</option>'+
+                  '<option value="60" selected>1 minute</option>'+
+                  '<option value="300">5 minutes</option>'+
+                  '<option value="600">10 minutes</option>'+
+                '</select></div>'+
+              '<button id="uk-add" class="btn btn-primary btn-sm" style="height:36px;white-space:nowrap">Add Monitor</button>'+
+            '</div>'+
+            '<div id="uk-msg" style="font-size:12px;margin-top:6px"></div>'
         },
 
         { key:'umami',      id:'umami',       name:'Umami',
@@ -356,20 +390,15 @@ export const pgIntegrations = `async function pgIntegrations() {
       let html = '<div class="page-wrap"><div class="page-head"><div class="page-title">Integrations</div>'+
         '<div class="page-sub">Connect your tools, copy setup snippets, and verify service health.</div></div>';
 
-      /* ── API key card ── */
-      html += '<div class="int-key-card">'+
-        '<div class="int-key-card-info">'+
-          '<div class="int-key-card-label">Collector API Key</div>'+
-          '<div class="int-key-card-note">Authenticates webhooks and internal service calls. Use as <code>X-API-Key</code> header.</div>'+
-        '</div>'+
-        '<div class="int-key-card-row">'+
-          '<code class="int-key-val" id="apik-val" data-hidden="1">'+
-            '\\u2022'.repeat(Math.min(apiKey.length, 32))+
-          '</code>'+
-          '<button class="btn btn-sm" id="apik-reveal" onclick="revealKey()">Reveal</button>'+
-          '<button class="btn btn-sm" id="apik-copy" onclick="copyKey()">Copy</button>'+
-        '</div>'+
-      '</div>';
+      /* ── Credential cards ── */
+      html += secretCard('apik', 'Collector API Key',
+        'Authenticates webhooks and internal service calls. Use as <code>X-API-Key</code> header.',
+        apiKey);
+      if (gtDsn && gtDsn !== 'http://KEY@your-glitchtip-host/PROJECT_ID') {
+        html += secretCard('gtdsn', 'GlitchTip DSN',
+          'Paste into <code>Sentry.init({ dsn: &quot;…&quot; })</code> in your app. Includes the public key and project ID.',
+          gtDsn);
+      }
 
       html += '<h3 class="int-section-title">Event Sources</h3>';
       html += '<div class="int-src-grid">';

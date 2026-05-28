@@ -40,6 +40,28 @@ export const pgSettings = `async function pgSettings() {
             '</div>'+
           '</div>'+
         '</div>'+
+        '<div class="card" style="margin-top:14px">'+
+          '<div class="card-head"><span class="card-title">Automation Approval</span></div>'+
+          '<div class="card-body">'+
+            '<div style="font-size:13px;color:var(--muted);margin-bottom:12px">'+
+              'Hold automation and require a manual Approve/Reject for events at or above the chosen severity. '+
+              'Set to <strong>Disabled</strong> to always auto-trigger.'+
+            '</div>'+
+            '<div style="display:flex;gap:8px;align-items:center">'+
+              '<select id="approval-severity" class="filter-select" style="flex:1">'+
+                '<option value="">Disabled — always auto-trigger</option>'+
+                '<option value="critical">Critical only</option>'+
+                '<option value="high">High and above</option>'+
+                '<option value="medium">Medium and above</option>'+
+                '<option value="low">Low and above</option>'+
+                '<option value="info">Info and above</option>'+
+                '<option value="debug">Debug and above (approve everything)</option>'+
+              '</select>'+
+              '<button id="approval-save" class="btn btn-primary" style="white-space:nowrap">Save</button>'+
+            '</div>'+
+            '<div id="approval-msg" style="font-size:12px;margin-top:8px"></div>'+
+          '</div>'+
+        '</div>'+
         '<div class="danger-zone">'+
           '<div class="danger-zone-title">&#9888; Danger Zone</div>'+
           '<div class="danger-zone-body">'+

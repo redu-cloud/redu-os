@@ -13,6 +13,9 @@ import {
   zammadAdminEmail,
   zammadAdminPassword,
   listmonkUrl,
+  collectorUrl,
+  collectorApiKey,
+  jsonHeaders,
   listmonkAdminUsername,
   listmonkAdminPassword,
   listmonkListName,
@@ -115,7 +118,7 @@ export function register(app: FastifyInstance): void {
     reply.headers(CORS).code(204).send()
   );
 
-  app.post("/api/zammad/contact", async (request, reply) => {
+  app.post("/api/zammad/contact", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (request, reply) => {
     reply.headers(CORS);
     const { name = "", email, subject, message } = request.body as {
       name?: string; email?: string; subject?: string; message?: string;
@@ -164,7 +167,7 @@ export function register(app: FastifyInstance): void {
     reply.headers(CORS).code(204).send()
   );
 
-  app.post("/api/listmonk/subscribe", async (request, reply) => {
+  app.post("/api/listmonk/subscribe", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (request, reply) => {
     reply.headers(CORS);
     const { name, email } = request.body as { name?: string; email?: string };
     if (!email?.trim()) {
@@ -193,6 +196,25 @@ export function register(app: FastifyInstance): void {
     if (!res.ok) {
       return reply.code(502).send({ ok: false, error: `Listmonk returned ${res.status}` });
     }
+
+    // Notify the collector — fire-and-forget, don't block the response
+    if (collectorUrl && collectorApiKey) {
+      fetch(`${collectorUrl}/v1/events`, {
+        method:  "POST",
+        headers: jsonHeaders(collectorApiKey),
+        body:    JSON.stringify({
+          source:   "listmonk",
+          type:     "audience.subscriber.created",
+          severity: "info",
+          message:  email.trim()
+            ? `${name?.trim() || email.trim()} joined ${listmonkListName}. Email: ${email.trim()}`
+            : `New subscriber joined ${listmonkListName}`,
+          user:     { email: email.trim(), name: name?.trim() || undefined },
+          metadata: { list_name: listmonkListName, list_uuid: uuid, signup_source: "web-form", event: "subscriber.created" }
+        })
+      }).catch(() => {});
+    }
+
     return { ok: true };
   });
 }

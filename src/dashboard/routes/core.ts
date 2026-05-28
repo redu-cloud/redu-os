@@ -46,24 +46,17 @@ async function httpOk(url: string, init?: RequestInit) {
  */
 async function litellmProbe(): Promise<boolean | "error"> {
   if (!litellmUrl) return false;
-  const model = process.env.AI_CHAT_MODEL || "gpt-4o-mini";
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = {};
   if (litellmMasterKey) headers["Authorization"] = `Bearer ${litellmMasterKey}`;
   try {
-    const resp = await fetch(`${litellmUrl}/chat/completions`, {
-      method: "POST",
+    // Use /health — fast, no model call, not affected by slow local models
+    const resp = await fetch(`${litellmUrl}/health`, {
       headers,
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: "hi" }],
-        max_tokens: 1
-      }),
-      signal: AbortSignal.timeout(15_000)
+      signal: AbortSignal.timeout(5_000)
     });
     if (resp.ok) return true;
-    // 4xx → reachable but key/model/quota problem
     if (resp.status >= 400 && resp.status < 500) return "error";
-    return false; // 5xx or unexpected
+    return false;
   } catch {
     return false; // network/timeout
   }

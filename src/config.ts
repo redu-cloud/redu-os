@@ -32,7 +32,7 @@ const envSchema = z.object({
   SUPABASE_URL: z.string().url(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(20),
 
-  QDRANT_ENABLED: envBoolean(false),
+  QDRANT_ENABLED: envBoolean(true),
   QDRANT_URL: z.string().url().default("http://127.0.0.1:6333"),
   QDRANT_API_KEY: z.string().optional().default(""),
   QDRANT_COLLECTION: z.string().default("redu_os_events"),
@@ -67,6 +67,7 @@ const envSchema = z.object({
   TELEGRAM_BOT_TOKEN:  z.string().optional().default(""),
   TELEGRAM_CHAT_ID:    z.string().optional().default(""),
 
+  REQUIRE_APPROVAL_SEVERITY: z.string().optional().default(""),
   MAX_EVENT_MESSAGE_LENGTH: z.coerce.number().default(8000)
 });
 

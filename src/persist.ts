@@ -23,6 +23,7 @@ export interface PersistedConfig {
     ai_chat_api_key?: string | null;
     ollama_model?: string | null;
     ollama_embed_model?: string | null;
+    require_approval_severity?: string | null;
   };
 }
 

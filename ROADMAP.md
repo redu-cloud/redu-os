@@ -57,6 +57,15 @@
 ## 🚧 In progress / next up
 
 - [x] **LiteLLM health probe** — replaced `/health/liveliness` ping with a 1-token chat completion; bad/expired API keys now show amber "Error" on the Overview service grid (tri-state: OK / Error / DOWN)
+- [x] **Full AI loop for all integrations** — GlitchTip (error.created + error.resolved), Zammad (ticket.created + ticket.resolved via auto-wired webhook+triggers in `setup-zammad.sh`), Uptime Kuma (down + recovered), Listmonk (subscriber.created via proxy + unsubscribed via 60s poller), Umami (analytics.event)
+- [x] **Auto-feedback on resolution** — `autoFeedbackOnRecovery`, `autoFeedbackOnTicketResolved`, `autoFeedbackOnErrorResolved`, `autoFeedbackOnUnsubscribe` in `supabase.ts`; each links resolution back to original event with delta time and score
+- [x] **Source-aware AI prompt** — `buildEventContext()` extracts key fields per source; `SOURCE_INSTRUCTIONS` per-source guidance; `stripRaw()` removes raw payload (~2000 token saving); GlitchTip prompt names file/line in recommended action
+- [x] **GlitchTip poller** — `src/dashboard/glitchtip-poller.ts` polls resolved issues every 60s, forwards as `error.resolved` events; uses Bearer API token provisioned by `setup-glitchtip.sh`
+- [x] **Listmonk poller** — `src/dashboard/listmonk-poller.ts` polls unsubscribed contacts every 60s, forwards as `audience.subscriber.unsubscribed`; subscribe proxy notifies collector on subscription
+- [x] **Public endpoint rate limiting** — `@fastify/rate-limit` with `global: false`; `/api/track` 60/min, `/api/zammad/contact` and `/api/listmonk/subscribe` 10/min
+- [x] **Normalizer unit tests** — 65 tests in `src/normalizers.test.ts` covering all 5 normalizers (GlitchTip Slack+Sentry formats, Zammad, Uptime Kuma, Umami, Listmonk); run with `npm test`
+- [x] **README rewrite** — contributor-focused README with value prop, architecture diagram, integrations table, quick start, contributing guide
+- [x] **docs/ai-loop.md** — full pipeline explanation with source-specific metadata tables
 - [ ] **Slack + Telegram notification test** — Discord confirmed working; Slack and Telegram channels need end-to-end test
 
 ---
@@ -93,7 +102,8 @@ For production deployments on 2–5 hosts (e.g. redu.cloud), the current Podman 
 - [ ] Webhook signature verification (HMAC) for GlitchTip and Zammad
 
 ### Security
-- [ ] **Public proxy endpoint protection** — `/api/track`, `/api/zammad/contact`, `/api/listmonk/subscribe` are currently CORS-open with no authentication; needs rate limiting and/or an optional lighter-weight public API key to prevent spam/abuse in production deployments
+- [x] **Public proxy endpoint rate limiting** — `@fastify/rate-limit` applied to `/api/track` (60/min), `/api/zammad/contact` (10/min), `/api/listmonk/subscribe` (10/min)
+- [ ] **Optional public API key** — lighter-weight key for public proxy endpoints to prevent abuse beyond rate limiting
 - [ ] **Key rotation** — `COLLECTOR_API_KEY` rotation UI in Settings; revoke old key, generate new one, update all webhook configs
 
 ### Memory / AI

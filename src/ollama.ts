@@ -13,6 +13,7 @@ interface RuntimeOverrides {
   ai_chat_api_key?: string | null;
   ollama_model?: string | null;
   ollama_embed_model?: string | null;
+  require_approval_severity?: string | null;
 }
 
 // Restore from disk at startup so restarts don't lose AI provider/model changes
@@ -35,6 +36,11 @@ export function setProviderOverride(p: string | null): void {
 }
 export function getProviderOverride(): string | null { return _overrides.ai_provider ?? null; }
 export function getActiveProvider(): string { return _overrides.ai_provider ?? config.AI_PROVIDER; }
+
+export function getApprovalSeverity(): string | null {
+  const v = _overrides.require_approval_severity ?? config.REQUIRE_APPROVAL_SEVERITY ?? null;
+  return v || null;
+}
 
 export type AiInsight = {
   category: string;
@@ -143,6 +149,55 @@ function cleanCategory(value: unknown, fallback: string): string {
   return text.slice(0, 120);
 }
 
+function buildEventContext(event: StoredEvent): string {
+  const meta = (event.metadata ?? {}) as Record<string, unknown>;
+
+  if (event.source === "glitchtip") {
+    const top = meta.stack_top as Record<string, unknown> | null | undefined;
+    const locParts = [
+      top?.file,
+      top?.line != null && `line ${top.line}`,
+      top?.fn    && `in ${top.fn}`,
+    ].filter(Boolean);
+    const fields = [
+      meta.project     && `Project: ${meta.project}`,
+      meta.environment && `Environment: ${meta.environment}`,
+      meta.release     && `Release: ${meta.release}`,
+      (meta.url ?? meta.transaction) && `Route: ${meta.url ?? meta.transaction}`,
+      meta.exception_type  && `Exception: ${meta.exception_type}`,
+      meta.exception_value && `Message: ${meta.exception_value}`,
+      locParts.length  && `Throw location: ${locParts.join(" ")}`,
+      top?.context     && `Code at throw: ${String(top.context).trim()}`,
+    ].filter(Boolean);
+    if (fields.length) return "=== Error Context ===\n" + fields.join("\n");
+  }
+
+  if (event.source === "uptime-kuma") {
+    const fields = [
+      meta.monitor_name && `Monitor: ${meta.monitor_name}`,
+      meta.monitor_url  && `URL: ${meta.monitor_url}`,
+      meta.status_text  && `Status: ${meta.status_text}`,
+    ].filter(Boolean);
+    if (fields.length) return "=== Monitor Context ===\n" + fields.join("\n");
+  }
+
+  return "";
+}
+
+function stripRaw(meta: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  if (!meta) return {};
+  const { raw: _raw, ...rest } = meta;
+  return rest;
+}
+
+const SOURCE_INSTRUCTIONS: Record<string, string> = {
+  glitchtip:    "For errors: name the exception type and file/line in summary. In recommended_action, tell the developer exactly where to look (file, line, function) and what to fix. If it&apos;s a TypeError/ReferenceError, identify what was null/undefined.",
+  "uptime-kuma": "category must be \"Reliability\". recommended_action should say which service to restart or check first.",
+  zammad:        "category must be \"Customer Support\". recommended_action should guide a support agent on next steps.",
+  umami:         "category must be \"User Behavior\". recommended_action should suggest a product or UX improvement.",
+  listmonk:      "category must be \"Audience Growth\". recommended_action should suggest a follow-up action.",
+};
+
 export async function analyzeEvent(event: StoredEvent): Promise<AiInsight> {
   const startedAt = new Date();
   const context = aiContext();
@@ -163,18 +218,31 @@ export async function analyzeEvent(event: StoredEvent): Promise<AiInsight> {
     return insight;
   }
 
-  const prompt = `
-You are an AI operations analyst for a startup.
+  const meta = event.metadata as Record<string, unknown> | null | undefined;
+  const eventContext = buildEventContext(event);
+  const sourceInstruction = SOURCE_INSTRUCTIONS[event.source] ?? (
+    typeof meta?.monitor_name === "string"
+      ? `The affected service is: ${meta.monitor_name}`
+      : `Event source: ${event.source}`
+  );
+
+  const eventForPrompt = { ...event, metadata: stripRaw(meta) };
+
+  const prompt = `You are an AI operations analyst for a startup.
 Analyze this event and return compact JSON only.
 
-Required keys:
-category, priority, sentiment, summary, recommended_action
+Required keys: category, priority, sentiment, summary, recommended_action
 
-Allowed priority values: Low, Medium, High
-Allowed sentiment values: Negative, Neutral, Positive
+Rules:
+- summary: one concise sentence naming the specific component, file, or user flow affected
+- recommended_action: concrete next step — name specific files, routes, or commands
+- ${sourceInstruction}
 
-Event:
-${JSON.stringify(event, null, 2)}
+Allowed priority: Low | Medium | High
+Allowed sentiment: Negative | Neutral | Positive
+${eventContext ? `\n${eventContext}\n` : ""}
+Event (JSON):
+${JSON.stringify(eventForPrompt, null, 2)}
 `;
 
   try {

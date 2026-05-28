@@ -11,7 +11,11 @@ function automationTargets() {
     .filter((url, index, urls) => url.length > 0 && urls.indexOf(url) === index);
 }
 
-export async function triggerAutomation(event: StoredEvent, insight: AiInsight) {
+export async function triggerAutomation(
+  event: StoredEvent,
+  insight: AiInsight,
+  meta?: { action_id?: string | null; callback_url?: string }
+) {
   const targets = automationTargets();
 
   if (targets.length === 0) {
@@ -30,7 +34,9 @@ export async function triggerAutomation(event: StoredEvent, insight: AiInsight) 
         },
         body: JSON.stringify({
           event,
-          insight
+          insight,
+          ...(meta?.action_id ? { action_id: meta.action_id } : {}),
+          ...(meta?.callback_url ? { callback_url: meta.callback_url } : {})
         })
       });
 

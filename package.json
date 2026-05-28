@@ -7,6 +7,7 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "test": "node --test --import tsx/esm src/normalizers.test.ts",
     "build": "tsc",
     "start": "node dist/server.js",
     "dashboard": "tsx src/dashboard.ts",
@@ -115,12 +116,14 @@
   "dependencies": {
     "@fastify/cors": "^10.0.1",
     "@fastify/helmet": "^12.0.1",
+    "@fastify/rate-limit": "^10.3.0",
     "@qdrant/js-client-rest": "^1.13.0",
     "@sentry/node": "^7.120.4",
     "@supabase/supabase-js": "^2.47.10",
     "@types/ws": "^8.18.1",
     "dotenv": "^16.4.7",
     "fastify": "^5.1.0",
+    "socket.io-client": "^4.8.3",
     "ws": "^8.21.0",
     "zod": "^3.24.1"
   },

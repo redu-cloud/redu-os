@@ -37,7 +37,12 @@ export const litellmMasterKey = process.env.LITELLM_MASTER_KEY ?? "";
 
 // ── Optional module URLs (empty string = not configured) ──────────────────────
 export const uptimeKumaUrl = toContainerUrl(process.env.UPTIME_KUMA_URL, "");
-export const glitchtipUrl  = toContainerUrl(process.env.GLITCHTIP_URL, "");
+export const uptimeKumaAdminUsername = process.env.UPTIME_KUMA_ADMIN_USERNAME ?? "admin";
+export const uptimeKumaAdminPassword = process.env.UPTIME_KUMA_ADMIN_PASSWORD ?? "";
+export const glitchtipUrl           = toContainerUrl(process.env.GLITCHTIP_URL, "");
+export const glitchtipAdminEmail    = process.env.GLITCHTIP_ADMIN_EMAIL    ?? "admin@example.com";
+export const glitchtipAdminPassword = process.env.GLITCHTIP_ADMIN_PASSWORD ?? "";
+export const glitchtipApiToken      = process.env.GLITCHTIP_API_TOKEN      ?? "";
 // GlitchTip DSN for @sentry/node — rewrite host portion so container can reach GlitchTip
 export const glitchtipDsn  = (() => {
   const raw = process.env.GLITCHTIP_DSN ?? "";

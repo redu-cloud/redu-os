@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { supabase } from "../config.js";
+import { supabase, collectorUrl, collectorApiKey, jsonHeaders } from "../config.js";
 
 export function register(app: FastifyInstance): void {
   app.get("/api/actions", async (request) => {
@@ -9,7 +9,7 @@ export function register(app: FastifyInstance): void {
 
     let query = supabase
       .from("ai_actions")
-      .select("*, startup_events(id,type,source,message)", { count: "exact" })
+      .select("*, startup_events(id,type,source,message,severity), ai_insights(category,priority,summary,recommended_action)", { count: "exact" })
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -30,6 +30,18 @@ export function register(app: FastifyInstance): void {
       return { ok: false, error: `status must be one of: ${allowed.join(", ")}` };
     }
 
+    // "approved" triggers automation via the collector rather than just updating the DB record
+    if (body.status === "approved") {
+      const res = await fetch(`${collectorUrl}/internal/actions/${id}/approve`, {
+        method: "POST",
+        headers: jsonHeaders(collectorApiKey),
+        body: "{}"
+      });
+      const data = await res.json() as Record<string, unknown>;
+      if (!res.ok) { reply.status(res.status); return { ok: false, error: (data.message ?? data.error ?? "Approval failed") as string }; }
+      return { ok: true, ...data };
+    }
+
     const { data, error } = await supabase
       .from("ai_actions")
       .update({ status: body.status, completed_at: new Date().toISOString() })
@@ -38,6 +50,22 @@ export function register(app: FastifyInstance): void {
       .single();
 
     if (error) { reply.status(500); return { ok: false, error: error.message }; }
+
+    // Rejected action → write a negative feedback signal
+    if (body.status === "rejected") {
+      const action = data as { startup_event_id?: string } | null;
+      if (action?.startup_event_id) {
+        await supabase.from("ai_feedback").insert({
+          startup_event_id: action.startup_event_id,
+          ai_action_id: id,
+          feedback_type: "action_rejected",
+          score: -1,
+          result: "rejected",
+          metadata: { reason: "user_rejected_automation" }
+        });
+      }
+    }
+
     return { ok: true, action: data };
   });
 }

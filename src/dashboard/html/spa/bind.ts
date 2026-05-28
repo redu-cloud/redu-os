@@ -53,6 +53,15 @@ export const spaBind = `
         document.querySelectorAll('.act-approve').forEach(b=>b.addEventListener('click',()=>updAct(b.dataset.id,'approved',b)));
         document.querySelectorAll('.act-reject').forEach(b=>b.addEventListener('click',()=>updAct(b.dataset.id,'rejected',b)));
         document.querySelectorAll('.act-complete').forEach(b=>b.addEventListener('click',()=>updAct(b.dataset.id,'completed',b)));
+        document.querySelectorAll('.act-det-btn').forEach(btn=>btn.addEventListener('click',function(){
+          const id=this.dataset.id;
+          const row=document.getElementById('actd-'+id);
+          if(!row) return;
+          const open=row.style.display==='table-row';
+          document.querySelectorAll('.act-detail-row').forEach(r=>r.style.display='none');
+          document.querySelectorAll('.act-det-btn').forEach(b=>b.textContent='Details');
+          if(!open){ row.style.display='table-row'; this.textContent='Close'; }
+        }));
       },
       memory() {
         const run=()=>doMemSearch($('mem-q').value);
@@ -249,8 +258,47 @@ export const spaBind = `
           const o=this.textContent; this.textContent='Copied!'; this.style.color='var(--green)';
           setTimeout(()=>{this.textContent=o;this.style.color='';},2000);
         }));
+        // Uptime Kuma — add monitor form
+        $('uk-add')?.addEventListener('click',async function(){
+          const name=($('uk-name')?.value||'').trim();
+          const url=($('uk-url')?.value||'').trim();
+          const interval=Number($('uk-interval')?.value||'60');
+          const msg=$('uk-msg');
+          if(!name||!url){if(msg){msg.textContent='Name and URL are required.';msg.style.color='var(--red)';}return;}
+          this.disabled=true;
+          if(msg){msg.textContent='Adding…';msg.style.color='var(--muted)';}
+          try {
+            await api('/api/uptime-kuma/monitors',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,url,interval})});
+            if(msg){msg.textContent='Monitor added! Check Uptime Kuma to configure alerts.';msg.style.color='var(--green)';}
+            if($('uk-name'))$('uk-name').value='';
+            if($('uk-url'))$('uk-url').value='';
+          } catch(e){
+            if(msg){msg.textContent=e.message;msg.style.color='var(--red)';}
+          } finally{this.disabled=false;}
+        });
       },
       settings() {
+        // Load and save approval severity
+        (async function(){
+          try {
+            const r = await api('/api/approval-config');
+            const sel = $('approval-severity');
+            if (sel && r.require_approval_severity) sel.value = r.require_approval_severity;
+          } catch {}
+        })();
+        $('approval-save')?.addEventListener('click', async function(){
+          const msg = $('approval-msg');
+          this.disabled = true;
+          if(msg){msg.textContent='Saving…';msg.style.color='var(--muted)';}
+          try {
+            const sel = $('approval-severity');
+            await api('/api/approval-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({severity:sel?sel.value:''})});
+            if(msg){msg.textContent='Saved.';msg.style.color='var(--green)';}
+          } catch(e){
+            if(msg){msg.textContent=e.message;msg.style.color='var(--red)';}
+          } finally { this.disabled=false; }
+        });
+
         $('reset-btn')?.addEventListener('click',async function(){
           const confirmed = window.confirm(
             'This will permanently delete ALL events, AI insights, actions, feedback, and memory vectors.\\n\\n' +
@@ -278,6 +326,16 @@ export const spaBind = `
         });
       },
       feedback() {
+        document.querySelectorAll('.fb-exp-btn').forEach(btn=>btn.addEventListener('click',function(){
+          const id=this.dataset.id;
+          const row=document.getElementById('fbd-'+id);
+          if(!row) return;
+          const open=row.style.display==='table-row';
+          document.querySelectorAll('.fb-detail-row').forEach(r=>r.style.display='none');
+          document.querySelectorAll('.fb-exp-btn').forEach(b=>b.textContent='Details');
+          if(!open){ row.style.display='table-row'; this.textContent='Close'; }
+        }));
+
         $('fb-submit')?.addEventListener('click',async function(){
           const eid=$('fb-eid')?.value?.trim(), msg=$('fb-msg');
           if(!eid){msg.textContent='Event ID is required.';msg.style.color='var(--red)';return;}

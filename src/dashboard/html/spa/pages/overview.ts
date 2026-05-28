@@ -30,7 +30,11 @@ export const pgOverview = `async function pgOverview() {
           mkMetric('Events', c.events??'--','processed total')+
           mkMetric('Insights', c.insights??'--','AI generated')+
           mkMetric('Actions', c.actions??'--','automations')+
-          mkMetric('Pending', pending.length,'needs approval')+
+          '<div class="metric-card" onclick="_filters[&apos;act-st&apos;]=&apos;pending_approval&apos;;go(&apos;actions&apos;)" style="cursor:pointer" title="View pending approvals">'+
+            '<div class="metric-label">Pending</div>'+
+            '<div class="metric-value">'+pending.length+'</div>'+
+            '<div class="metric-desc">'+(pending.length ? '<span style="color:var(--amber)">needs approval &rarr;</span>' : 'review in Actions &rarr;')+'</div>'+
+          '</div>'+
           mkMetric('Feedback', c.feedback??'--','outcomes')+
           mkMetric('Services', svcOk+'/'+Object.keys(sv).length,'connected')+
         '</div>'+
@@ -79,7 +83,19 @@ export const pgOverview = `async function pgOverview() {
               '</div>'+
               '<div style="padding:0 16px">'+
                 (attention.length ?
-                  attention.map(a=>'<div class="att-item"><span>'+a.ico+'</span><div><div>'+a.txt+'</div><div class="tl-meta">'+a.sub+'</div></div></div>').join('') :
+                  attention.map(a=>{
+                    const isApproval = a.sub==='needs manual review';
+                    const clickAttr = isApproval
+                      ? ' onclick="_filters[&apos;act-st&apos;]=&apos;pending_approval&apos;;go(&apos;actions&apos;)" title="Go to Actions to approve"'
+                      : '';
+                    return '<div class="att-item'+(isApproval?' att-link':'')+'"'+clickAttr+'>'+
+                      '<span>'+a.ico+'</span>'+
+                      '<div>'+
+                        '<div>'+a.txt+'</div>'+
+                        '<div class="tl-meta">'+a.sub+(isApproval?' &rarr; Actions':'')+'</div>'+
+                      '</div>'+
+                    '</div>';
+                  }).join('') :
                   empty('&#9989;','All clear','No failed actions or pending approvals.')
                 )+
               '</div>'+

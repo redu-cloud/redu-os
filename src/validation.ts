@@ -16,7 +16,7 @@ export const genericEventSchema = z.object({
   user: z.object({
     email: z.string().email().optional(),
     name: z.string().max(200).optional()
-  }).optional(),
+  }).nullish(),
   message: z.string().min(1),
   metadata: z.record(z.unknown()).optional().default({})
 });
