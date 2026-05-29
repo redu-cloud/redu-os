@@ -2,7 +2,7 @@
 
 # reduOS
 
-**The self-hosted AI operative system for startups**
+**The self-hosted AI operative system**
 
 Connect your tools. Watch events. Get AI insights. Automate. Remember what worked.
 
