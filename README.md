@@ -33,6 +33,8 @@ Event → Collector → Supabase → Qdrant memory → AI analysis → Activepie
 
 Every time something is resolved — a ticket closed, downtime recovered, an error fixed — reduOS links the outcome back to the original event. The next time something similar happens, the AI sees what happened last time.
 
+A second loop runs automatically every 5 minutes: the **cross-source correlator** scans recent events from all connected tools, asks LangGraph whether events across different sources are causally related, and fires an in-dashboard alert when a correlated incident is detected. Approving or rejecting the correlation writes back to Qdrant so future correlation runs remember what was a real incident and what was noise.
+
 ---
 
 ## Quick Start
@@ -83,15 +85,7 @@ reduOS connects to the tools startups already use:
 
 **Full AI loop** means: event received → stored in Supabase → embedded in Qdrant → AI generates insight → Activepieces triggers automation → Discord/Slack/Telegram notification fires → outcome linked back as feedback.
 
-Each service can be started as an optional module:
-
-```bash
-npm run modular:glitchtip:up    # GlitchTip error tracking
-npm run modular:zammad:up       # Zammad support desk
-npm run modular:uptime:up       # Uptime Kuma monitoring
-npm run modular:listmonk:up     # Listmonk email
-npm run modular:umami:up        # Umami analytics
-```
+Each service can also be started individually with `npm run modular:<service>:up`.
 
 ![reduOS integrations page showing webhook endpoints, code snippets, and service status](docs/images/integrations.png)
 
@@ -134,26 +128,19 @@ Switch provider or model without restarting from `/#ai-config` in the dashboard.
 
 ## Stack
 
-`npm run full` starts 13 services across two groups:
-
-**Core — always running:**
+`npm run full` starts all 15 services:
 
 | Service | Port | Purpose |
 |---|---|---|
 | Collector (Fastify/TypeScript) | 3005 | Event ingestion, AI loop, webhook endpoints |
-| Dashboard (Fastify/TypeScript) | 3006 | 12-page SPA — events, insights, actions, memory, logs |
+| Dashboard (Fastify/TypeScript) | 3006 | 12-page SPA — events, insights, actions, memory, agents, logs |
 | Supabase API | 8000 | Structured storage (events, insights, actions, feedback) |
 | Supabase Studio | 3000 | Database browser |
 | Qdrant | 6333 | Vector memory for semantic retrieval |
 | Ollama | 11435 | Local AI models (deepseek-r1, nomic-embed-text) |
 | LiteLLM | 4000 | AI gateway — routes to OpenAI, Anthropic, Gemini, Groq, OpenRouter |
-| LangGraph | 3010 | Multi-step agent workflows (Python/FastAPI) |
+| LangGraph | 3010 | Multi-step agent workflows + cross-source correlator (Python/FastAPI) |
 | Activepieces | 8080 | Automation flows triggered by AI insights |
-
-**Optional modules — started individually:**
-
-| Service | Port | Purpose |
-|---|---|---|
 | Uptime Kuma | 3001 | Uptime monitoring with alerting |
 | Umami | 3002 | Privacy-friendly analytics |
 | GlitchTip | 8001 | Error tracking (Sentry-compatible) |
@@ -177,37 +164,7 @@ npm run doctor    # Full service health check
 
 Contributions are welcome — integrations, tests, dashboard improvements, AI prompt tuning, docs.
 
-**Good first issues:**
-- Add a normalizer for a new tool (GitHub events, Stripe webhooks, Linear issues, Resend bounces)
-- Write tests for edge cases in existing normalizers
-- Improve AI prompts in `src/ollama.ts` for a specific source
-- Improve dashboard pages
-
-**How to add a new integration — 5 steps:**
-
-1. **Normalizer** — add `normalizeYourTool(payload)` in [`src/normalizers.ts`](src/normalizers.ts). Takes the raw webhook body, returns `NormalizedEvent`. See `normalizeZammad` or `normalizeUptimeKuma` as a reference.
-
-2. **Route** — add `app.post("/v1/events/yourtool", ...)` in [`src/server.ts`](src/server.ts).
-
-3. **Tests** — add a `describe` block in [`src/normalizers.test.ts`](src/normalizers.test.ts) covering the common payload shapes and edge cases.
-
-4. **Doc** — add `docs/yourtool.md` explaining how to set up the webhook on the external service side.
-
-5. **Demo script** — add `scripts/demo-yourtool.sh` with a sample curl.
-
-**Dev setup:**
-
-```bash
-git clone https://github.com/redu-cloud/redu-os
-cd redu-os
-cp .env.example .env
-# Set at minimum: COLLECTOR_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
-npm install
-npm run dev        # Collector with hot reload on :3005
-npm test           # Run tests
-```
-
-Please open an issue before starting large changes.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, how to add a new integration, and the review process.
 
 ---
 
@@ -221,7 +178,8 @@ Please open an issue before starting large changes.
 | [Production Deployment](docs/production-deployment.md) | HTTPS, secrets, backups, upgrades |
 | [Integration Webhooks](docs/integration-webhooks.md) | Webhook setup for every supported tool |
 | [AI Provider Modes](docs/ai-provider-modes.md) | Ollama, LiteLLM, OpenAI-compatible, fallback |
-| [LangGraph Agents](docs/langgraph.md) | Multi-step agent workflows |
+| [LangGraph Agents](docs/langgraph.md) | Multi-step agent workflows and cross-source correlator |
+| [Cross-Source Correlator](docs/correlator.md) | Automatic incident correlation across all connected tools |
 | [Activepieces Automation](docs/activepieces.md) | Automation flow setup and templates |
 
 ---

@@ -117,6 +117,7 @@ All agent endpoints require `X-API-Key: ${LANGGRAPH_API_KEY}`.
 | `POST /v1/agents/support` | Support triage workflow |
 | `POST /v1/agents/onboarding` | Startup onboarding workflow |
 | `POST /v1/agents/product-signal` | Product signal workflow |
+| `POST /v1/agents/correlate` | Cross-source correlation — see [correlator docs](correlator.md) |
 
 ## Provider Modes
 

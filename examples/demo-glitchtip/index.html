@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GlitchTip Demo — reduOS Error Tracking</title>
+
+  <!-- Sentry/GlitchTip SDK via CDN -->
+  <script src="https://browser.sentry-cdn.com/7.120.3/bundle.min.js" crossorigin="anonymous"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3d;
+      --text: #e2e8f0; --muted: #64748b; --green: #22c55e;
+      --red: #ef4444; --yellow: #f59e0b; --blue: #3b82f6;
+      --radius: 8px; --font: 'Inter', system-ui, sans-serif;
+    }
+    body { background: var(--bg); color: var(--text); font-family: var(--font); min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 32px; width: 100%; max-width: 560px; }
+    h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+    .sub { color: var(--muted); font-size: 14px; margin-bottom: 28px; }
+    .dsn-row { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; font-family: monospace; font-size: 12px; color: var(--muted); margin-bottom: 28px; word-break: break-all; }
+    .dsn-row span { color: var(--text); }
+    .btn-group { display: flex; flex-direction: column; gap: 10px; }
+    button { width: 100%; padding: 12px 20px; border-radius: var(--radius); font-size: 14px; font-weight: 600; cursor: pointer; border: none; transition: opacity .15s; }
+    button:hover { opacity: .85; }
+    .btn-red    { background: var(--red);    color: #fff; }
+    .btn-yellow { background: var(--yellow); color: #000; }
+    .btn-blue   { background: var(--blue);   color: #fff; }
+    .btn-muted  { background: var(--border); color: var(--text); }
+    .log { margin-top: 24px; border-top: 1px solid var(--border); padding-top: 20px; }
+    .log-title { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 10px; }
+    .log-entry { font-size: 13px; padding: 8px 10px; border-radius: 6px; margin-bottom: 6px; font-family: monospace; }
+    .log-entry.ok    { background: rgba(34,197,94,.08);  color: var(--green); }
+    .log-entry.err   { background: rgba(239,68,68,.08);  color: var(--red); }
+    .log-entry.info  { background: rgba(59,130,246,.08); color: var(--blue); }
+    .status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; margin-bottom: 20px; padding: 6px 12px; border-radius: 20px; background: rgba(34,197,94,.1); color: var(--green); border: 1px solid rgba(34,197,94,.2); }
+    .status.error { background: rgba(239,68,68,.1); color: var(--red); border-color: rgba(239,68,68,.2); }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>GlitchTip Error Tracking</h1>
+    <p class="sub">Demo app for reduOS — fires real errors captured by GlitchTip → AI loop</p>
+
+    <div class="dsn-row">DSN: <span id="dsn-display">initialising…</span></div>
+    <div id="sdk-status" class="status error"><div class="dot"></div> SDK not ready</div>
+
+    <div class="btn-group">
+      <button class="btn-red" onclick="triggerUnhandled()">
+        💥 Throw unhandled JS error
+      </button>
+      <button class="btn-yellow" onclick="triggerManual()">
+        ⚠️ Capture message (manual)
+      </button>
+      <button class="btn-blue" onclick="triggerException()">
+        🔵 Capture handled exception
+      </button>
+      <button class="btn-muted" onclick="triggerUnhandledPromise()">
+        ⛓️ Unhandled promise rejection
+      </button>
+    </div>
+
+    <div class="log">
+      <div class="log-title">Event log</div>
+      <div id="event-log"><div style="color:var(--muted);font-size:13px">No events yet — click a button above.</div></div>
+    </div>
+  </div>
+
+  <script>
+    const DSN = "__GLITCHTIP_DSN__";
+
+    // Init Sentry SDK (compatible with GlitchTip)
+    Sentry.init({
+      dsn: DSN,
+      tracesSampleRate: 0,
+      beforeSend(event) {
+        appendLog('ok', 'Event sent to GlitchTip: ' + (event.exception?.values?.[0]?.value || event.message || event.event_id));
+        return event;
+      }
+    });
+
+    document.getElementById('dsn-display').textContent = DSN || 'NOT SET — check .env';
+
+    // Verify SDK initialised
+    if (Sentry.getCurrentHub && Sentry.getCurrentHub().getClient()) {
+      setStatus(true);
+    } else {
+      setTimeout(() => setStatus(!!Sentry.getCurrentHub?.()?.getClient?.()), 1000);
+    }
+
+    function setStatus(ok) {
+      const el = document.getElementById('sdk-status');
+      if (ok) {
+        el.className = 'status';
+        el.innerHTML = '<div class="dot"></div> SDK ready — ' + (DSN.split('@')[1] || DSN);
+      }
+    }
+
+    function appendLog(type, msg) {
+      const log = document.getElementById('event-log');
+      const t = new Date().toTimeString().slice(0, 8);
+      // Clear placeholder
+      const placeholder = log.querySelector('[style]');
+      if (placeholder) placeholder.remove();
+
+      const div = document.createElement('div');
+      div.className = 'log-entry ' + type;
+      div.textContent = t + '  ' + msg;
+      log.insertBefore(div, log.firstChild);
+    }
+
+    // ── Error triggers ─────────────────────────────────────────────
+
+    function triggerUnhandled() {
+      appendLog('info', 'Throwing unhandled error…');
+      // Real JS error — will be caught by Sentry's global handler
+      setTimeout(function triggerUnhandledError() {
+        const obj = null;
+        return obj.nonExistentMethod(); // TypeError: Cannot read properties of null
+      }, 10);
+    }
+
+    function triggerManual() {
+      Sentry.captureMessage('Manual test message from demo-glitchtip app', 'warning');
+      appendLog('ok', 'Captured message sent');
+    }
+
+    function triggerException() {
+      try {
+        JSON.parse('{ invalid json %%%');
+      } catch (e) {
+        Sentry.captureException(e);
+        appendLog('ok', 'Handled exception captured: ' + e.message);
+      }
+    }
+
+    function triggerUnhandledPromise() {
+      appendLog('info', 'Rejecting promise without catch…');
+      Promise.reject(new Error('Unhandled rejection from demo-glitchtip'));
+    }
+  </script>
+</body>
+</html>

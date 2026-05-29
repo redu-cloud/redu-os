@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>LaunchKit — Ship Faster, Learn Faster</title>
+
+  <!-- Umami analytics — auto-tracks pageviews and navigation -->
+  <script async defer
+    src="__UMAMI_URL__/script.js"
+    data-website-id="__UMAMI_WEBSITE_ID__">
+  </script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:      #0f1117;
+      --surface: #1a1d27;
+      --border:  #2a2d3a;
+      --ink:     #e8eaf0;
+      --muted:   #8b8fa8;
+      --accent:  #6c63ff;
+      --green:   #3fb950;
+      --amber:   #d29922;
+      --red:     #f85149;
+      --blue:    #58a6ff;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.6;
+    }
+
+    /* ── NAV ── */
+    nav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 40px; border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; background: rgba(15,17,23,.92);
+      backdrop-filter: blur(8px); z-index: 100;
+    }
+    .nav-logo { font-size: 20px; font-weight: 800; color: var(--ink); letter-spacing: -.5px; }
+    .nav-logo span { color: var(--accent); }
+    .nav-links { display: flex; gap: 28px; }
+    .nav-links a { color: var(--muted); text-decoration: none; font-size: 14px; }
+    .nav-links a:hover { color: var(--ink); }
+    .nav-cta { background: var(--accent); color: #fff; border: none; padding: 8px 20px;
+      border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+    .nav-cta:hover { opacity: .88; }
+
+    /* ── HERO ── */
+    .hero {
+      text-align: center; padding: 100px 40px 80px;
+      max-width: 720px; margin: 0 auto;
+    }
+    .hero-badge {
+      display: inline-block; background: rgba(108,99,255,.15); color: var(--accent);
+      border: 1px solid rgba(108,99,255,.3); border-radius: 100px;
+      font-size: 12px; font-weight: 600; padding: 4px 14px; margin-bottom: 24px;
+      letter-spacing: .5px; text-transform: uppercase;
+    }
+    .hero h1 {
+      font-size: clamp(36px, 6vw, 64px); font-weight: 800; line-height: 1.1;
+      letter-spacing: -1.5px; margin-bottom: 20px;
+    }
+    .hero h1 em { color: var(--accent); font-style: normal; }
+    .hero p { font-size: 18px; color: var(--muted); margin-bottom: 40px; }
+    .hero-btns { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .btn-primary {
+      background: var(--accent); color: #fff; border: none; padding: 14px 28px;
+      border-radius: 10px; font-size: 16px; font-weight: 600; cursor: pointer;
+    }
+    .btn-primary:hover { opacity: .88; }
+    .btn-ghost {
+      background: transparent; color: var(--ink); border: 1px solid var(--border);
+      padding: 14px 28px; border-radius: 10px; font-size: 16px; cursor: pointer;
+    }
+    .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ── FEATURES ── */
+    .section { padding: 80px 40px; max-width: 1100px; margin: 0 auto; }
+    .section-label {
+      font-size: 12px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 1.5px; color: var(--accent); margin-bottom: 12px;
+    }
+    .section h2 { font-size: 36px; font-weight: 800; letter-spacing: -.5px; margin-bottom: 48px; }
+    .features-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px;
+    }
+    .feature-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+      padding: 28px; transition: border-color .2s;
+    }
+    .feature-card:hover { border-color: var(--accent); }
+    .feature-icon { font-size: 28px; margin-bottom: 14px; }
+    .feature-card h3 { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
+    .feature-card p { font-size: 14px; color: var(--muted); line-height: 1.6; }
+
+    /* ── PRICING ── */
+    .pricing-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 20px;
+    }
+    .plan-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+      padding: 32px; position: relative;
+    }
+    .plan-card.featured {
+      border-color: var(--accent);
+      background: linear-gradient(135deg, rgba(108,99,255,.08), var(--surface));
+    }
+    .plan-badge {
+      position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
+      background: var(--accent); color: #fff; font-size: 11px; font-weight: 700;
+      padding: 3px 14px; border-radius: 100px; letter-spacing: .5px; text-transform: uppercase;
+    }
+    .plan-name { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+    .plan-price { font-size: 40px; font-weight: 800; margin-bottom: 4px; }
+    .plan-price span { font-size: 16px; font-weight: 400; color: var(--muted); }
+    .plan-desc { font-size: 13px; color: var(--muted); margin-bottom: 24px; }
+    .plan-features { list-style: none; margin-bottom: 28px; }
+    .plan-features li { font-size: 14px; padding: 5px 0; display: flex; gap: 8px; align-items: center; }
+    .plan-features li::before { content: "✓"; color: var(--green); font-weight: 700; }
+    .plan-btn {
+      width: 100%; padding: 12px; border-radius: 10px; font-size: 15px;
+      font-weight: 600; cursor: pointer; border: none;
+    }
+    .plan-btn.accent  { background: var(--accent); color: #fff; }
+    .plan-btn.outline { background: transparent; color: var(--ink); border: 1px solid var(--border); }
+    .plan-btn:hover { opacity: .85; }
+
+    /* ── CONTACT ── */
+    .contact-section {
+      max-width: 560px; margin: 0 auto; padding: 80px 40px;
+    }
+    .form-row { margin-bottom: 16px; }
+    .form-label { font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 6px; display: block; }
+    .form-input, .form-textarea {
+      width: 100%; background: var(--surface); border: 1px solid var(--border);
+      color: var(--ink); border-radius: 10px; padding: 10px 14px; font-size: 14px;
+    }
+    .form-input:focus, .form-textarea:focus {
+      outline: none; border-color: var(--accent);
+    }
+    .form-textarea { min-height: 100px; resize: vertical; font-family: inherit; }
+    .form-submit {
+      width: 100%; background: var(--accent); color: #fff; border: none;
+      padding: 12px; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer;
+    }
+    .form-submit:hover { opacity: .88; }
+    .form-msg { font-size: 13px; margin-top: 10px; min-height: 20px; }
+
+    /* ── DEMO PANEL ── */
+    .demo-panel {
+      margin: 0 40px 60px; border: 1px solid rgba(108,99,255,.4);
+      border-radius: 16px; overflow: hidden;
+      background: linear-gradient(135deg, rgba(108,99,255,.06), rgba(15,17,23,.8));
+    }
+    .demo-header {
+      padding: 16px 24px; border-bottom: 1px solid rgba(108,99,255,.25);
+      display: flex; align-items: center; gap: 10px;
+    }
+    .demo-header-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+      box-shadow: 0 0 8px var(--accent); animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .demo-title { font-size: 14px; font-weight: 700; color: var(--accent); }
+    .demo-subtitle { font-size: 12px; color: var(--muted); margin-left: auto; }
+    .demo-body { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+    @media(max-width:640px){ .demo-body{grid-template-columns:1fr;} }
+    .demo-events { padding: 20px 24px; border-right: 1px solid rgba(108,99,255,.2); }
+    .demo-events h4 { font-size: 12px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 1px; color: var(--muted); margin-bottom: 14px; }
+    .event-btn {
+      display: flex; align-items: center; gap: 10px; width: 100%;
+      background: rgba(255,255,255,.04); border: 1px solid var(--border);
+      color: var(--ink); padding: 10px 14px; border-radius: 10px;
+      font-size: 13px; cursor: pointer; margin-bottom: 8px; text-align: left;
+      transition: all .15s;
+    }
+    .event-btn:hover { border-color: var(--accent); background: rgba(108,99,255,.08); }
+    .event-btn:active { transform: scale(.98); }
+    .event-btn .ev-icon { font-size: 16px; flex-shrink: 0; }
+    .event-btn .ev-info { flex: 1; }
+    .event-btn .ev-name { font-weight: 600; }
+    .event-btn .ev-meta { font-size: 11px; color: var(--muted); }
+    .event-btn .ev-sev {
+      font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 4px;
+      letter-spacing: .4px; text-transform: uppercase; flex-shrink: 0;
+    }
+    .sev-info   { background: rgba(88,166,255,.15); color: var(--blue);  }
+    .sev-medium { background: rgba(210,153,34,.15);  color: var(--amber); }
+    .sev-high   { background: rgba(248,81,73,.15);   color: var(--red);   }
+    .demo-log { padding: 20px 24px; }
+    .demo-log h4 { font-size: 12px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 1px; color: var(--muted); margin-bottom: 14px; display: flex; justify-content: space-between; }
+    .demo-log h4 button {
+      background: none; border: none; color: var(--muted); font-size: 11px;
+      cursor: pointer; text-transform: none; letter-spacing: 0; font-family: inherit;
+    }
+    .demo-log h4 button:hover { color: var(--ink); }
+    #event-log {
+      height: 280px; overflow-y: auto; font-size: 12px;
+      font-family: ui-monospace, monospace;
+    }
+    .log-entry {
+      padding: 6px 8px; border-radius: 6px; margin-bottom: 4px;
+      background: rgba(255,255,255,.03); border-left: 2px solid var(--border);
+      animation: fadeIn .2s ease;
+    }
+    .log-entry.ok   { border-left-color: var(--green); }
+    .log-entry.err  { border-left-color: var(--red); }
+    .log-entry.sent { border-left-color: var(--accent); }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
+    .log-time { color: var(--muted); }
+    .log-type { color: var(--accent); font-weight: 700; }
+    .log-msg  { color: var(--muted); }
+    .log-empty { color: var(--muted); text-align: center; padding: 40px 0; }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid var(--border); padding: 24px 40px;
+      text-align: center; font-size: 13px; color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── NAVIGATION ── -->
+<nav>
+  <div class="nav-logo">Launch<span>Kit</span></div>
+  <div class="nav-links">
+    <a href="#features">Features</a>
+    <a href="#pricing">Pricing</a>
+    <a href="#contact">Contact</a>
+  </div>
+  <button class="nav-cta" onclick="trackAndGo('cta-click', {location:'nav', action:'start_trial'}, 'Start Free Trial')">
+    Start Free Trial
+  </button>
+</nav>
+
+<!-- ── HERO ── -->
+<section class="hero">
+  <div class="hero-badge">Now in Public Beta</div>
+  <h1>Ship faster.<br/><em>Learn faster.</em></h1>
+  <p>The AI-powered operations stack for early-stage startups.<br/>
+     Event tracking, AI insights, and automation — all in one place.</p>
+  <div class="hero-btns">
+    <button class="btn-primary" onclick="trackAndGo('cta-click', {location:'hero', action:'start_trial', plan:'free'}, 'Get Started Free')">
+      Get Started Free
+    </button>
+    <button class="btn-ghost" onclick="trackAndGo('cta-click', {location:'hero', action:'book_demo'}, 'Book a Demo')">
+      Book a Demo
+    </button>
+  </div>
+</section>
+
+<!-- ── FEATURES ── -->
+<section class="section" id="features">
+  <div class="section-label">Features</div>
+  <h2>Everything your startup needs</h2>
+  <div class="features-grid">
+    <div class="feature-card">
+      <div class="feature-icon">⚡</div>
+      <h3>Real-time event tracking</h3>
+      <p>Capture every signup, purchase, and user action. Full funnel visibility from day one.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🤖</div>
+      <h3>AI analysis loop</h3>
+      <p>Every event gets an AI-generated insight. Know what matters before you even notice.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🔔</div>
+      <h3>Smart notifications</h3>
+      <p>Get alerted on Discord, Slack, or Telegram when critical events happen.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🧠</div>
+      <h3>Semantic memory</h3>
+      <p>The AI remembers what happened before. It learns your patterns and reduces noise.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">⚙️</div>
+      <h3>Automation actions</h3>
+      <p>Approve or auto-trigger follow-up actions via Activepieces. No more manual toil.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🔌</div>
+      <h3>Plug-and-play integrations</h3>
+      <p>GlitchTip, Uptime Kuma, Zammad, Listmonk, Umami — all pre-wired.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ── PRICING ── -->
+<section class="section" id="pricing">
+  <div class="section-label">Pricing</div>
+  <h2>Simple, honest pricing</h2>
+  <div class="pricing-grid">
+    <div class="plan-card">
+      <div class="plan-name">Free</div>
+      <div class="plan-price">$0 <span>/month</span></div>
+      <div class="plan-desc">For indie hackers and side projects.</div>
+      <ul class="plan-features">
+        <li>Up to 1,000 events/month</li>
+        <li>3 integrations</li>
+        <li>AI insights (basic)</li>
+        <li>Email notifications</li>
+      </ul>
+      <button class="plan-btn outline"
+        onclick="trackAndGo('signup', {plan:'free', source:'pricing'}, 'Sign Up Free')">
+        Sign Up Free
+      </button>
+    </div>
+    <div class="plan-card featured">
+      <div class="plan-badge">Most Popular</div>
+      <div class="plan-name">Pro</div>
+      <div class="plan-price">$49 <span>/month</span></div>
+      <div class="plan-desc">For startups that need the full loop.</div>
+      <ul class="plan-features">
+        <li>Unlimited events</li>
+        <li>All integrations</li>
+        <li>AI insights + actions</li>
+        <li>Discord / Slack / Telegram</li>
+        <li>Semantic memory (Qdrant)</li>
+        <li>Priority support</li>
+      </ul>
+      <button class="plan-btn accent"
+        onclick="trackAndGo('plan.selected', {plan:'pro', amount:49, source:'pricing'}, 'Get Pro →')">
+        Get Pro →
+      </button>
+    </div>
+    <div class="plan-card">
+      <div class="plan-name">Enterprise</div>
+      <div class="plan-price">Custom</div>
+      <div class="plan-desc">For teams with custom requirements.</div>
+      <ul class="plan-features">
+        <li>Self-hosted or managed</li>
+        <li>Custom integrations</li>
+        <li>SLA &amp; support</li>
+        <li>Audit logs</li>
+      </ul>
+      <button class="plan-btn outline"
+        onclick="trackAndGo('cta-click', {plan:'enterprise', action:'contact_sales', source:'pricing'}, 'Talk to Sales')">
+        Talk to Sales
+      </button>
+    </div>
+  </div>
+</section>
+
+<!-- ── CONTACT ── -->
+<section class="contact-section" id="contact">
+  <div class="section-label">Contact</div>
+  <h2 style="margin-bottom:32px">Get in touch</h2>
+  <form onsubmit="submitContact(event)">
+    <div class="form-row">
+      <label class="form-label">Name</label>
+      <input id="c-name" class="form-input" placeholder="Jane Doe"/>
+    </div>
+    <div class="form-row">
+      <label class="form-label">Email</label>
+      <input id="c-email" class="form-input" type="email" placeholder="jane@company.com"/>
+    </div>
+    <div class="form-row">
+      <label class="form-label">Message</label>
+      <textarea id="c-msg" class="form-textarea" placeholder="Tell us about your use case…"></textarea>
+    </div>
+    <button type="submit" class="form-submit">Send Message</button>
+    <div id="c-feedback" class="form-msg"></div>
+  </form>
+</section>
+
+<!-- ── DEMO TRACKING PANEL ── -->
+<div class="demo-panel" id="demo">
+  <div class="demo-header">
+    <div class="demo-header-dot"></div>
+    <div class="demo-title">Demo Track Events</div>
+    <div class="demo-subtitle">Events → reduOS AI loop → Dashboard</div>
+  </div>
+  <div class="demo-body">
+    <div class="demo-events">
+      <h4>Fire an event</h4>
+
+      <button class="event-btn" onclick="demoTrack('pageview', {url:location.href, title:document.title}, 'info')">
+        <span class="ev-icon">📄</span>
+        <span class="ev-info">
+          <div class="ev-name">Manual pageview</div>
+          <div class="ev-meta">umami.track() — single-page app navigation</div>
+        </span>
+        <span class="ev-sev sev-info">info</span>
+      </button>
+
+      <button class="event-btn" onclick="demoTrack('cta-click', {page:location.pathname, element:'hero_cta'}, 'info')">
+        <span class="ev-icon">👆</span>
+        <span class="ev-info">
+          <div class="ev-name">CTA click</div>
+          <div class="ev-meta">umami.track('cta-click', {page: location.pathname})</div>
+        </span>
+        <span class="ev-sev sev-info">info</span>
+      </button>
+
+      <button class="event-btn" onclick="demoTrack('signup', {plan:'free', email:'demo@example.com', source:'hero'}, 'medium')">
+        <span class="ev-icon">✍️</span>
+        <span class="ev-info">
+          <div class="ev-name">Signup — free plan</div>
+          <div class="ev-meta">umami.track('signup', {plan: 'free'})</div>
+        </span>
+        <span class="ev-sev sev-medium">medium</span>
+      </button>
+
+      <button class="event-btn" onclick="demoTrack('contact-form', {status:'submitted', subject:'Enterprise inquiry'}, 'medium')">
+        <span class="ev-icon">📬</span>
+        <span class="ev-info">
+          <div class="ev-name">Form submission</div>
+          <div class="ev-meta">umami.track('contact-form', {status: 'submitted'})</div>
+        </span>
+        <span class="ev-sev sev-medium">medium</span>
+      </button>
+
+      <button class="event-btn" onclick="demoTrack('plan.selected', {plan:'pro', amount:49}, 'medium')">
+        <span class="ev-icon">⭐</span>
+        <span class="ev-info">
+          <div class="ev-name">Plan selected — Pro</div>
+          <div class="ev-meta">User selected Pro plan on pricing page</div>
+        </span>
+        <span class="ev-sev sev-medium">medium</span>
+      </button>
+
+      <button class="event-btn" onclick="demoTrack('purchase', {amount:49, plan:'pro', email:'demo@example.com'}, 'high')">
+        <span class="ev-icon">💳</span>
+        <span class="ev-info">
+          <div class="ev-name">Purchase — Pro $49/mo</div>
+          <div class="ev-meta">umami.track('purchase', {amount: 49, plan: 'pro'})</div>
+        </span>
+        <span class="ev-sev sev-high">high</span>
+      </button>
+    </div>
+
+    <div class="demo-log">
+      <h4>
+        Event log
+        <button onclick="clearLog()">Clear</button>
+      </h4>
+      <div id="event-log">
+        <div class="log-empty">Fire an event to see it here →</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  &copy; 2026 LaunchKit &mdash; Demo website for <a href="http://127.0.0.1:3006" style="color:var(--accent)">reduOS</a>
+</footer>
+
+<script>
+  const REDUOS_URL = '__REDUOS_URL__';
+
+  /* ── Helpers ─────────────────────────────────────────── */
+  function fmt(d) {
+    return new Date(d).toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  }
+
+  function appendLog(type, msg, status) {
+    const el = document.getElementById('event-log');
+    const empty = el.querySelector('.log-empty');
+    if (empty) empty.remove();
+    const entry = document.createElement('div');
+    entry.className = 'log-entry ' + (status || 'sent');
+    entry.innerHTML =
+      '<span class="log-time">' + fmt(Date.now()) + '</span> ' +
+      '<span class="log-type">' + type + '</span>' +
+      (msg ? ' <span class="log-msg">— ' + msg + '</span>' : '');
+    el.prepend(entry);
+  }
+
+  function clearLog() {
+    document.getElementById('event-log').innerHTML = '<div class="log-empty">Log cleared.</div>';
+  }
+
+  /* ── Core track function ─────────────────────────────── */
+  function track(type, metadata, severity) {
+    // 1. Umami
+    if (typeof umami !== 'undefined') {
+      umami.track(type, metadata);
+    }
+
+    // 2. reduOS collector (via dashboard CORS proxy)
+    const messages = {
+      'pageview':     'User visited ' + (metadata.url || location.href),
+      'cta-click':    'CTA clicked — ' + (metadata.element || metadata.page || 'unknown'),
+      'signup':       'New ' + (metadata.plan || 'free') + ' plan signup' + (metadata.email ? ' — ' + metadata.email : ''),
+      'contact-form': 'Contact form submitted — ' + (metadata.subject || metadata.status || 'submitted'),
+      'plan.selected':'User selected ' + (metadata.plan || '?') + ' plan ($' + (metadata.amount || 0) + '/mo)',
+      'purchase':     'Purchase: $' + (metadata.amount || 0) + '/mo ' + (metadata.plan || 'unknown') + ' plan',
+    };
+    const message = messages[type] || type;
+
+    return fetch(REDUOS_URL + '/api/track', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        source:   'website',
+        type:     type,
+        severity: severity || 'info',
+        message:  message,
+        metadata: Object.assign({}, metadata, {url: location.href, referrer: document.referrer || undefined}),
+        user:     null
+      })
+    });
+  }
+
+  /* ── Demo panel buttons ──────────────────────────────── */
+  function demoTrack(type, metadata, severity) {
+    appendLog(type, '→ sending…', 'sent');
+    track(type, metadata, severity)
+      .then(r => r.json())
+      .then(d => {
+        if (d.ok) {
+          appendLog(type, '✓ accepted by reduOS (id: ' + (d.id || '').slice(0,8) + '…)', 'ok');
+        } else {
+          appendLog(type, '✗ ' + (d.error || 'error'), 'err');
+        }
+      })
+      .catch(e => appendLog(type, '✗ ' + e.message, 'err'));
+  }
+
+  /* ── Button helpers ──────────────────────────────────── */
+  function trackAndGo(type, meta, label) {
+    track(type, meta, meta.plan === 'pro' ? 'high' : 'medium');
+    appendLog(type, label, 'sent');
+  }
+
+  /* ── Contact form ────────────────────────────────────── */
+  function submitContact(e) {
+    e.preventDefault();
+    const name    = document.getElementById('c-name').value.trim();
+    const email   = document.getElementById('c-email').value.trim();
+    const message = document.getElementById('c-msg').value.trim();
+    const fb      = document.getElementById('c-feedback');
+    if (!email) { fb.textContent = 'Email is required.'; fb.style.color = '#f85149'; return; }
+    track('contact-form', {
+      status: 'submitted', name, email,
+      subject: message.slice(0, 80) || 'Contact form submission'
+    }, 'medium');
+    fb.textContent = '✓ Sent! We\'ll be in touch.';
+    fb.style.color = '#3fb950';
+    e.target.reset();
+  }
+
+  /* ── Auto pageview on load ───────────────────────────── */
+  track('pageview', {url: location.href, title: document.title}, 'info');
+</script>
+</body>
+</html>
