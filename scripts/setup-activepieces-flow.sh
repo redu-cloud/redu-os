@@ -125,7 +125,7 @@ echo "PROJECT_ID=${PROJECT_ID}"
 
 echo "Waiting for Activepieces to sync the webhook piece (AP_PIECES_SYNC_MODE=OFFICIAL_AUTO)..."
 WEBHOOK_VERSION=""
-for i in $(seq 1 60); do
+for i in $(seq 1 200); do
   WEBHOOK_VERSION="$(curl -sS "${AP_LOCAL_URL}/api/v1/pieces" \
     -H "Authorization: Bearer ${TOKEN}" \
     | jq -r '.[] | select(.name == "@activepieces/piece-webhook") | .version' 2>/dev/null | head -n1 || true)"
@@ -135,10 +135,14 @@ for i in $(seq 1 60); do
     break
   fi
 
-  if [ "$i" = "60" ]; then
-    echo "Webhook piece did not appear after 3 minutes. Pieces may still be downloading." >&2
-    echo "Wait a moment and retry: npm run activepieces:setup" >&2
-    exit 1
+  if [ "$i" = "200" ]; then
+    echo "Warning: webhook piece did not appear after 10 minutes — skipping flow creation." >&2
+    echo "Run 'npm run activepieces:setup' once Activepieces finishes syncing pieces." >&2
+    exit 0
+  fi
+
+  if (( i % 10 == 0 )); then
+    echo "  Still waiting for webhook piece... (${i}/200)"
   fi
 
   sleep 3
