@@ -71,6 +71,23 @@ source "$SUPABASE_ENV"
 source "${ROOT_DIR}/.env"
 set +a
 
+# Auto-detect podman socket path: root uses /run/podman/podman.sock,
+# rootless users use /run/user/<uid>/podman/podman.sock
+if [ -z "${PODMAN_SOCKET_PATH:-}" ]; then
+  if [ "$(id -u)" = "0" ]; then
+    export PODMAN_SOCKET_PATH="/run/podman/podman.sock"
+  else
+    export PODMAN_SOCKET_PATH="/run/user/$(id -u)/podman/podman.sock"
+  fi
+  # Persist to .env so docker-compose picks it up on next run
+  if grep -q "^PODMAN_SOCKET_PATH=" "${ROOT_DIR}/.env" 2>/dev/null; then
+    sed -i "s|^PODMAN_SOCKET_PATH=.*|PODMAN_SOCKET_PATH=${PODMAN_SOCKET_PATH}|" "${ROOT_DIR}/.env"
+  else
+    echo "PODMAN_SOCKET_PATH=${PODMAN_SOCKET_PATH}" >> "${ROOT_DIR}/.env"
+  fi
+  echo "  PODMAN_SOCKET_PATH=${PODMAN_SOCKET_PATH} (auto-detected)"
+fi
+
 # ---------------------------------------------------------------------------
 # Tear down any legacy single-compose stack
 # ---------------------------------------------------------------------------
