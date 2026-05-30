@@ -8,7 +8,7 @@ const sseClients = new Set<ServerResponse>();
 let lastSeen: string | null = null;
 let pollerStarted = false;
 
-function broadcastSse(payload: object): void {
+export function broadcastSse(payload: object): void {
   if (sseClients.size === 0) return;
   const msg = `data: ${JSON.stringify(payload)}\n\n`;
   for (const client of [...sseClients]) {
